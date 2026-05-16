@@ -1,5 +1,3 @@
-export const defaultPlayers = ['Joel', 'Zach'];
-
 export const initialHoles = [
   { hole: 1, par: 4, tee: 'fairway', gir: false, approachMiss: 'left bunker', upAndDown: false, putts: 2, firstPuttFt: 12, score: 5 },
   { hole: 2, par: 5, tee: 'rough_right', gir: true, approachMiss: 'none', upAndDown: false, putts: 2, firstPuttFt: 28, score: 5 },

@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import VoiceRecorder from './components/VoiceRecorder';
 import { starterCourseLayouts } from './courseData';
-import { defaultPlayers, initialClarifications, initialHoles } from './data';
+import { initialClarifications, initialHoles } from './data';
 import { clearState, loadState, saveState } from './storage';
 import { average, buildSavedRound, calcStatsFromHoles, formatToPar } from './utils';
 import HoleEditor from './components/HoleEditor';
-import PlayerPicker from './components/PlayerPicker';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, MiniBar, StatCard, TabButton, Textarea } from './components/UI';
 
 const TEE_OPTIONS = ['Yellow', 'White', 'Red'];
@@ -648,6 +647,41 @@ function RoundDetail({ round, onClose }) {
   );
 }
 
+function UserSetup({ onContinue }) {
+  const [name, setName] = useState('');
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    onContinue(trimmedName);
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="container">
+        <Card className="round-shell">
+          <CardHeader><CardTitle>What's your name?</CardTitle></CardHeader>
+          <CardContent>
+            <form className="stack" onSubmit={handleSubmit}>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                autoFocus
+                className="input-lg"
+                placeholder="Your name"
+              />
+              <Button className="btn-lg" type="submit" disabled={!name.trim()}>
+                Continue
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function CourseLayoutEditor({ course, tees, courseLayouts, onSaveCourseLayout }) {
   const hasCourse = Boolean(course.trim());
   const resolvedCourse = resolveCourseName(courseLayouts, course);
@@ -822,7 +856,7 @@ function parseClarificationValue(field, value) {
 }
 
 function LogRoundTab({
-  players, selectedPlayer, setSelectedPlayer,
+  selectedPlayer,
   course, setCourse, tees, setTees,
   voiceRecap, setVoiceRecap,
   transcript, setTranscript,
@@ -987,11 +1021,6 @@ function LogRoundTab({
     <div className="stack">
       <Card className="round-shell">
         <CardContent className="stack">
-          <div>
-            <div className="section-kicker">PLAYER</div>
-            <PlayerPicker players={players} selectedPlayer={selectedPlayer} onSelect={setSelectedPlayer} />
-          </div>
-
           <div className="stack">
             <div className="section-kicker">ROUND INFO</div>
             <div>
@@ -1169,13 +1198,13 @@ function LogRoundTab({
   );
 }
 
-function HistoryTab({ rounds, selectedPlayer, selectedRoundId, setSelectedRoundId, onDeleteRound }) {
-  const filtered = rounds.filter((round) => round.player === selectedPlayer);
+function HistoryTab({ rounds, selectedRoundId, setSelectedRoundId, onDeleteRound }) {
+  const filtered = rounds;
   const selectedRound = filtered.find((round) => round.id === selectedRoundId);
 
   return (
     <Card>
-      <CardHeader><CardTitle>{selectedPlayer} history</CardTitle></CardHeader>
+      <CardHeader><CardTitle>Your history</CardTitle></CardHeader>
       <CardContent className="stack">
         {filtered.length === 0 ? (
           <div className="empty-box">No saved rounds yet.</div>
@@ -1220,8 +1249,14 @@ function HistoryTab({ rounds, selectedPlayer, selectedRoundId, setSelectedRoundI
   );
 }
 
-function DataManagement({ appData, onImportData, onResetData }) {
+function DataManagement({ appData, selectedPlayer, onChangePlayerName, onImportData, onResetData }) {
   const fileInputRef = useRef(null);
+  const [isChangingName, setIsChangingName] = useState(false);
+  const [draftName, setDraftName] = useState(selectedPlayer || '');
+
+  useEffect(() => {
+    setDraftName(selectedPlayer || '');
+  }, [selectedPlayer]);
 
   function exportJson() {
     downloadTextFile(
@@ -1253,6 +1288,14 @@ function DataManagement({ appData, onImportData, onResetData }) {
     }
   }
 
+  function savePlayerName(event) {
+    event.preventDefault();
+    const trimmedName = draftName.trim();
+    if (!trimmedName) return;
+    onChangePlayerName(trimmedName);
+    setIsChangingName(false);
+  }
+
   return (
     <Card>
       <CardHeader><CardTitle>Data management</CardTitle></CardHeader>
@@ -1265,8 +1308,23 @@ function DataManagement({ appData, onImportData, onResetData }) {
           <Button variant="secondary" onClick={exportJson}>Export JSON</Button>
           <Button variant="secondary" onClick={exportCsv}>Export CSV</Button>
           <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Import JSON</Button>
+          <Button variant="secondary" onClick={() => setIsChangingName((current) => !current)}>
+            Change player name
+          </Button>
           <Button variant="secondary" onClick={onResetData}>Reset app data</Button>
         </div>
+        {isChangingName && (
+          <form className="stack" onSubmit={savePlayerName}>
+            <div>
+              <div className="field-label">Player name</div>
+              <Input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
+            </div>
+            <div className="row wrap">
+              <Button variant="secondary" type="button" onClick={() => setIsChangingName(false)}>Cancel</Button>
+              <Button type="submit" disabled={!draftName.trim()}>Save name</Button>
+            </div>
+          </form>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -1279,8 +1337,8 @@ function DataManagement({ appData, onImportData, onResetData }) {
   );
 }
 
-function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }) {
-  const filtered = rounds.filter((round) => round.player === selectedPlayer);
+function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImportData, onResetData }) {
+  const filtered = rounds;
   const hasRounds = filtered.length > 0;
   const dashboardStats = useMemo(() => {
     if (filtered.length === 0) {
@@ -1325,7 +1383,13 @@ function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }
       ) : (
         <div className="empty-box">No saved rounds yet. Log and save a round to see your profile snapshot.</div>
       )}
-      <DataManagement appData={appData} onImportData={onImportData} onResetData={onResetData} />
+      <DataManagement
+        appData={appData}
+        selectedPlayer={selectedPlayer}
+        onChangePlayerName={onChangePlayerName}
+        onImportData={onImportData}
+        onResetData={onResetData}
+      />
     </div>
   );
 }
@@ -1333,7 +1397,8 @@ function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }
   export default function App() {
   const [activeTab, setActiveTab] = useState('log');
   const [selectedRoundId, setSelectedRoundId] = useState(null);
-  const [selectedPlayer, setSelectedPlayer] = useState('Joel');
+  const [selectedPlayer, setSelectedPlayer] = useState('');
+  const [hasLoadedState, setHasLoadedState] = useState(false);
   const [course, setCourse] = useState('Devonvale Golf Club');
   const [tees, setTees] = useState('Yellow');
   const [transcript, setTranscript] = useState('');
@@ -1359,11 +1424,22 @@ function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }
     if (state?.savedRounds) setSavedRounds(state.savedRounds);
     if (state?.selectedPlayer) setSelectedPlayer(state.selectedPlayer);
     if (state?.customCourseLayouts) setCustomCourseLayouts(state.customCourseLayouts);
+    setHasLoadedState(true);
   }, []);
 
   useEffect(() => {
+    if (!hasLoadedState || !selectedPlayer) return;
     saveState({ savedRounds, selectedPlayer, customCourseLayouts });
-  }, [savedRounds, selectedPlayer, customCourseLayouts]);
+  }, [hasLoadedState, savedRounds, selectedPlayer, customCourseLayouts]);
+
+  function handleCompleteUserSetup(playerName) {
+    setSelectedPlayer(playerName);
+    setSavedRounds((current) => current.map((round) => ({ ...round, player: playerName })));
+  }
+
+  function handleChangePlayerName(playerName) {
+    setSelectedPlayer(playerName);
+  }
 
   function handleSaveRound(payload) {
     const round = buildSavedRound(payload);
@@ -1485,7 +1561,7 @@ function handleImportData(imported) {
   }
 
   setSavedRounds(imported.savedRounds);
-  setSelectedPlayer(imported.selectedPlayer || 'Joel');
+  setSelectedPlayer(imported.selectedPlayer || selectedPlayer);
   setCustomCourseLayouts(imported.customCourseLayouts || {});
   setSelectedRoundId(null);
   setActiveTab('stats');
@@ -1501,25 +1577,31 @@ function handleResetData() {
 
   clearState();
   setSavedRounds([]);
-  setSelectedPlayer('Joel');
+  setSelectedPlayer('');
   setCustomCourseLayouts({});
   setSelectedRoundId(null);
   setActiveTab('log');
 }
+  if (!hasLoadedState) {
+    return null;
+  }
+
+  if (!selectedPlayer) {
+    return <UserSetup onContinue={handleCompleteUserSetup} />;
+  }
+
   return (
     <div className="app-shell">
       <div className="container">
         <div className="tab-row">
           <TabButton active={activeTab === 'log'} label="Log round" onClick={() => setActiveTab('log')} />
-          <TabButton active={activeTab === 'history'} label="History" onClick={() => setActiveTab('history')} />
-          <TabButton active={activeTab === 'stats'} label="Stats" onClick={() => setActiveTab('stats')} />
+          <TabButton active={activeTab === 'history'} label="Your history" onClick={() => setActiveTab('history')} />
+          <TabButton active={activeTab === 'stats'} label="Your stats" onClick={() => setActiveTab('stats')} />
         </div>
 
         {activeTab === 'log' && (
           <LogRoundTab
-            players={defaultPlayers}
             selectedPlayer={selectedPlayer}
-            setSelectedPlayer={setSelectedPlayer}
             course={course}
             setCourse={setCourse}
             tees={tees}
@@ -1547,7 +1629,6 @@ function handleResetData() {
 {activeTab === 'history' && (
   <HistoryTab
     rounds={savedRounds}
-    selectedPlayer={selectedPlayer}
     selectedRoundId={selectedRoundId}
     setSelectedRoundId={setSelectedRoundId}
     onDeleteRound={handleDeleteRound}
@@ -1558,6 +1639,7 @@ function handleResetData() {
     rounds={savedRounds}
     selectedPlayer={selectedPlayer}
     appData={appData}
+    onChangePlayerName={handleChangePlayerName}
     onImportData={handleImportData}
     onResetData={handleResetData}
   />
