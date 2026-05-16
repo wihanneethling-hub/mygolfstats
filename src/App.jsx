@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import VoiceRecorder from './components/VoiceRecorder';
 import { starterCourseLayouts } from './courseData';
-import { defaultPlayers, historicalRounds, initialClarifications, initialHoles } from './data';
+import { defaultPlayers, initialClarifications, initialHoles } from './data';
 import { clearState, loadState, saveState } from './storage';
 import { average, buildSavedRound, calcStatsFromHoles, formatToPar } from './utils';
 import HoleEditor from './components/HoleEditor';
@@ -1281,6 +1281,7 @@ function DataManagement({ appData, onImportData, onResetData }) {
 
 function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }) {
   const filtered = rounds.filter((round) => round.player === selectedPlayer);
+  const hasRounds = filtered.length > 0;
   const dashboardStats = useMemo(() => {
     if (filtered.length === 0) {
       return { fairwaysPct: 0, girPct: 0, putts: '0.0', toPar: '0.0', upAndDownPct: 0 };
@@ -1307,19 +1308,23 @@ function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }
         <StatCard label="Avg Putts" value={dashboardStats.putts} />
         <StatCard label="Up-and-down" value={`${dashboardStats.upAndDownPct}%`} />
       </div>
-      <Card>
-        <CardHeader><CardTitle>Profile snapshot</CardTitle></CardHeader>
-        <CardContent className="stack">
-          <div className="snapshot-box">
-            <div className="muted small">Best area</div>
-            <div className="title-md">{bestArea}</div>
-          </div>
-          <div className="snapshot-box">
-            <div className="muted small">Biggest leak</div>
-            <div className="title-md">{biggestLeak}</div>
-          </div>
-        </CardContent>
-      </Card>
+      {hasRounds ? (
+        <Card>
+          <CardHeader><CardTitle>Profile snapshot</CardTitle></CardHeader>
+          <CardContent className="stack">
+            <div className="snapshot-box">
+              <div className="muted small">Best area</div>
+              <div className="title-md">{bestArea}</div>
+            </div>
+            <div className="snapshot-box">
+              <div className="muted small">Biggest leak</div>
+              <div className="title-md">{biggestLeak}</div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="empty-box">No saved rounds yet. Log and save a round to see your profile snapshot.</div>
+      )}
       <DataManagement appData={appData} onImportData={onImportData} onResetData={onResetData} />
     </div>
   );
@@ -1336,7 +1341,7 @@ function StatsTab({ rounds, selectedPlayer, appData, onImportData, onResetData }
   const [holes, setHoles] = useState(initialHoles);
   const [clarifications, setClarifications] = useState(initialClarifications);
   const [editingHole, setEditingHole] = useState(null);
-  const [savedRounds, setSavedRounds] = useState(historicalRounds);
+  const [savedRounds, setSavedRounds] = useState([]);
   const [customCourseLayouts, setCustomCourseLayouts] = useState({});
   const [voiceRecap, setVoiceRecap] = useState('');
   const courseLayouts = useMemo(() => mergeCourseLayouts(customCourseLayouts), [customCourseLayouts]);
@@ -1495,7 +1500,7 @@ function handleResetData() {
   if (!extraConfirmed) return;
 
   clearState();
-  setSavedRounds(historicalRounds);
+  setSavedRounds([]);
   setSelectedPlayer('Joel');
   setCustomCourseLayouts({});
   setSelectedRoundId(null);
