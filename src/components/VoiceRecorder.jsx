@@ -41,6 +41,7 @@ function getAudioMimeType(blob) {
   if (fileName.endsWith('.m4a') || fileName.endsWith('.mp4')) return 'audio/mp4';
   if (fileName.endsWith('.mp3')) return 'audio/mpeg';
   if (fileName.endsWith('.wav')) return 'audio/wav';
+  if (fileName.endsWith('.aac')) return 'audio/aac';
   if (fileName.endsWith('.webm')) return 'audio/webm';
 
   return 'audio/webm';
@@ -406,7 +407,7 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept="audio/*"
+            accept=".m4a,.mp4,.mp3,.wav,.webm,.aac,audio/*"
             style={{ display: 'none' }}
             onChange={handleAudioUpload}
           />
