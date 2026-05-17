@@ -8,7 +8,11 @@ export async function handler(event) {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { audioBase64, mimeType = 'audio/webm' } = body;
+    const {
+      audioBase64,
+      mimeType = 'audio/webm',
+      fileName = 'recording.webm'
+    } = body;
 
     if (!audioBase64) {
       return {
@@ -18,10 +22,15 @@ export async function handler(event) {
     }
 
     const audioBuffer = Buffer.from(audioBase64, 'base64');
+    console.log('Transcription upload:', {
+      mimeType,
+      fileName,
+      audioSize: audioBuffer.length,
+    });
 
     const formData = new FormData();
     const blob = new Blob([audioBuffer], { type: mimeType });
-    formData.append('file', blob, 'recording.webm');
+    formData.append('file', blob, fileName);
     formData.append('model', 'gpt-4o-mini-transcribe');
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -32,7 +41,16 @@ export async function handler(event) {
       body: formData,
     });
 
-    const data = await response.json();
+    const responseText = await response.text();
+    let data = {};
+
+    if (responseText) {
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { error: { message: responseText } };
+      }
+    }
 
     if (!response.ok) {
       return {

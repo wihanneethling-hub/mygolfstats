@@ -4,6 +4,30 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Textarea } from './UI
 const SILENCE_THRESHOLD = 0.018;
 const SILENCE_MS = 2200;
 const MIN_RECORDING_MS = 2500;
+const PREFERRED_AUDIO_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/wav'
+];
+
+export function getAudioExtension(mimeType = '') {
+  const normalized = mimeType.toLowerCase();
+
+  if (normalized.includes('audio/webm')) return 'webm';
+  if (normalized.includes('audio/mp4')) return 'm4a';
+  if (normalized.includes('audio/mpeg')) return 'mp3';
+  if (normalized.includes('audio/wav')) return 'wav';
+
+  return 'webm';
+}
+
+function getSupportedAudioMimeType() {
+  if (!window.MediaRecorder?.isTypeSupported) return '';
+
+  return PREFERRED_AUDIO_MIME_TYPES.find((mimeType) => window.MediaRecorder.isTypeSupported(mimeType)) || '';
+}
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -139,7 +163,10 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
       analyserRef.current = analyser;
       startedAtRef.current = Date.now();
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mimeType = getSupportedAudioMimeType();
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       chunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
@@ -149,7 +176,8 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
+        const recordedMimeType = mediaRecorder.mimeType || mimeType || chunksRef.current[0]?.type || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type: recordedMimeType });
         setAudioBlob(blob);
         revokeAudioUrl();
         const url = URL.createObjectURL(blob);
@@ -197,6 +225,8 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
 
   async function sendAudio(blob, endpoint) {
     const audioBase64 = await blobToBase64(blob);
+    const mimeType = blob.type || 'audio/webm';
+    const fileName = `round-recap.${getAudioExtension(mimeType)}`;
 
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -205,7 +235,8 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
       },
       body: JSON.stringify({
         audioBase64,
-        mimeType: blob.type || 'audio/webm'
+        mimeType,
+        fileName
       })
     });
 
