@@ -11,6 +11,7 @@ const PREFERRED_AUDIO_MIME_TYPES = [
   'audio/mpeg',
   'audio/wav'
 ];
+const ALLOWED_AUDIO_EXTENSIONS = ['m4a', 'mp4', 'mp3', 'wav', 'aac', 'webm'];
 
 export function getAudioExtension(mimeType = '') {
   const normalized = mimeType.toLowerCase();
@@ -34,15 +35,20 @@ function getAudioFileName(blob, fallbackMimeType = 'audio/webm') {
   return `round-recap.${getAudioExtension(blob?.type || fallbackMimeType)}`;
 }
 
+function getFileExtension(fileName = '') {
+  const extension = fileName.toLowerCase().split('.').pop();
+  return extension && extension !== fileName.toLowerCase() ? extension : '';
+}
+
 function getAudioMimeType(blob) {
   if (blob?.type) return blob.type;
 
-  const fileName = blob?.name?.toLowerCase() || '';
-  if (fileName.endsWith('.m4a') || fileName.endsWith('.mp4')) return 'audio/mp4';
-  if (fileName.endsWith('.mp3')) return 'audio/mpeg';
-  if (fileName.endsWith('.wav')) return 'audio/wav';
-  if (fileName.endsWith('.aac')) return 'audio/aac';
-  if (fileName.endsWith('.webm')) return 'audio/webm';
+  const extension = getFileExtension(blob?.name);
+  if (extension === 'm4a' || extension === 'mp4') return 'audio/mp4';
+  if (extension === 'mp3') return 'audio/mpeg';
+  if (extension === 'wav') return 'audio/wav';
+  if (extension === 'aac') return 'audio/aac';
+  if (extension === 'webm') return 'audio/webm';
 
   return 'audio/webm';
 }
@@ -268,6 +274,13 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    const extension = getFileExtension(file.name);
+    if (!ALLOWED_AUDIO_EXTENSIONS.includes(extension)) {
+      setError('Please choose an audio file: m4a, mp4, mp3, wav, aac, or webm.');
+      event.target.value = '';
+      return;
+    }
+
     setAudioBlob(file);
     setAudioFileName(file.name);
     setError('');
@@ -407,7 +420,6 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".m4a,.mp4,.mp3,.wav,.webm,.aac,audio/*"
             style={{ display: 'none' }}
             onChange={handleAudioUpload}
           />
@@ -452,7 +464,7 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
               <div className="muted small">Recorded audio preview</div>
               {audioBlob && (
                 <div className="muted tiny">
-                  {audioFileName || getAudioFileName(audioBlob)} • {getAudioMimeType(audioBlob)} • {formatFileSize(audioBlob.size)}
+                  {audioFileName || getAudioFileName(audioBlob)} • {getFileExtension(audioFileName || getAudioFileName(audioBlob)) || 'no extension'} • {getAudioMimeType(audioBlob)} • {formatFileSize(audioBlob.size)}
                 </div>
               )}
             </div>
