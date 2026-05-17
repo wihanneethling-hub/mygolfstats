@@ -29,6 +29,38 @@ function getSupportedAudioMimeType() {
   return PREFERRED_AUDIO_MIME_TYPES.find((mimeType) => window.MediaRecorder.isTypeSupported(mimeType)) || '';
 }
 
+function getAudioFileName(blob, fallbackMimeType = 'audio/webm') {
+  if (blob?.name) return blob.name;
+  return `round-recap.${getAudioExtension(blob?.type || fallbackMimeType)}`;
+}
+
+function getAudioMimeType(blob) {
+  if (blob?.type) return blob.type;
+
+  const fileName = blob?.name?.toLowerCase() || '';
+  if (fileName.endsWith('.m4a') || fileName.endsWith('.mp4')) return 'audio/mp4';
+  if (fileName.endsWith('.mp3')) return 'audio/mpeg';
+  if (fileName.endsWith('.wav')) return 'audio/wav';
+  if (fileName.endsWith('.webm')) return 'audio/webm';
+
+  return 'audio/webm';
+}
+
+function formatFileSize(size = 0) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function buildAudioErrorMessage(apiMessage, blob, fileName) {
+  return [
+    `File: ${fileName || getAudioFileName(blob)}`,
+    `MIME type: ${getAudioMimeType(blob)}`,
+    `Size: ${formatFileSize(blob?.size || 0)}`,
+    `API error: ${apiMessage || 'Audio processing failed'}`
+  ].join('\n');
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -47,9 +79,11 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
   const [isSupported, setIsSupported] = useState(true);
   const [audioUrl, setAudioUrl] = useState('');
   const [audioBlob, setAudioBlob] = useState(null);
+  const [audioFileName, setAudioFileName] = useState('');
   const [status, setStatus] = useState('Ready to record a round recap.');
   const [error, setError] = useState('');
 
+  const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const chunksRef = useRef([]);
@@ -178,12 +212,14 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
       mediaRecorder.onstop = () => {
         const recordedMimeType = mediaRecorder.mimeType || mimeType || chunksRef.current[0]?.type || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: recordedMimeType });
+        const fileName = getAudioFileName(blob, recordedMimeType);
         setAudioBlob(blob);
+        setAudioFileName(fileName);
         revokeAudioUrl();
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
         setAudioUrl(url);
-        processRoundAudio(blob);
+        processRoundAudio(blob, fileName);
       };
 
       mediaRecorderRef.current = mediaRecorder;
@@ -216,17 +252,34 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
 
   function clearRecording() {
     setAudioBlob(null);
+    setAudioFileName('');
     setError('');
     setStatus('Ready to record a round recap.');
     revokeAudioUrl();
     setAudioUrl('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
     onChange('');
   }
 
-  async function sendAudio(blob, endpoint) {
+  function handleAudioUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAudioBlob(file);
+    setAudioFileName(file.name);
+    setError('');
+    setStatus('Audio file ready. Use Transcribe only, or process it as a round recap.');
+    revokeAudioUrl();
+    const url = URL.createObjectURL(file);
+    audioUrlRef.current = url;
+    setAudioUrl(url);
+  }
+
+  async function sendAudio(blob, endpoint, fileName = getAudioFileName(blob)) {
     const audioBase64 = await blobToBase64(blob);
-    const mimeType = blob.type || 'audio/webm';
-    const fileName = `round-recap.${getAudioExtension(mimeType)}`;
+    const mimeType = getAudioMimeType(blob);
 
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -247,31 +300,31 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
       try {
         data = JSON.parse(responseText);
       } catch {
-        throw new Error(`Server returned ${res.status}: ${responseText.slice(0, 160)}`);
+        throw new Error(buildAudioErrorMessage(`Server returned ${res.status}: ${responseText.slice(0, 160)}`, blob, fileName));
       }
     }
 
     if (!res.ok) {
-      throw new Error(data.error || 'Audio processing failed');
+      throw new Error(buildAudioErrorMessage(data.error || 'Audio processing failed', blob, fileName));
     }
 
     return data;
   }
 
-  async function processRoundAudio(blob = audioBlob) {
+  async function processRoundAudio(blob = audioBlob, fileName = audioFileName || getAudioFileName(blob)) {
     if (!blob || isProcessing) return;
 
     try {
       setIsProcessing(true);
       setError('');
       setStatus('Transcribing and understanding the round...');
-      const data = await sendAudio(blob, '/.netlify/functions/process-round');
+      const data = await sendAudio(blob, '/.netlify/functions/process-round', fileName);
       onChange(data.transcript || '');
       onRoundProcessed?.(data);
       setStatus(data.clarifications?.length ? 'A few details need clarification.' : 'Round understood. Review and save when ready.');
     } catch (processingError) {
       console.error(processingError);
-      setError(processingError.message || 'Error processing audio');
+      setError(processingError.message || buildAudioErrorMessage('Error processing audio', blob, fileName));
       setStatus('Processing failed. You can retry or edit the transcript manually.');
     } finally {
       setIsProcessing(false);
@@ -280,17 +333,18 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
 
   async function transcribeAudio() {
     if (!audioBlob || isProcessing) return;
+    const fileName = audioFileName || getAudioFileName(audioBlob);
 
     try {
       setIsProcessing(true);
       setError('');
       setStatus('Transcribing audio...');
-      const data = await sendAudio(audioBlob, '/.netlify/functions/transcribe');
+      const data = await sendAudio(audioBlob, '/.netlify/functions/transcribe', fileName);
       onChange(data.text || '');
       setStatus('Transcript ready. You can process it manually if needed.');
     } catch (transcriptionError) {
       console.error(transcriptionError);
-      setError(transcriptionError.message || 'Error transcribing audio');
+      setError(transcriptionError.message || buildAudioErrorMessage('Error transcribing audio', audioBlob, fileName));
       setStatus('Transcription failed.');
     } finally {
       setIsProcessing(false);
@@ -341,6 +395,23 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
           )}
         </div>
 
+        <div className="row wrap">
+          <Button
+            variant="secondary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isRecording || isProcessing}
+          >
+            Upload audio file
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*"
+            style={{ display: 'none' }}
+            onChange={handleAudioUpload}
+          />
+        </div>
+
         {audioBlob && !isRecording && (
           <details className="recorder-more">
             <summary>More recording options</summary>
@@ -372,11 +443,18 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
           </details>
         )}
 
-        {error && <div className="error-box">{error}</div>}
+        {error && <div className="error-box" style={{ whiteSpace: 'pre-wrap' }}>{error}</div>}
 
         {audioUrl && (
           <div className="stack">
-            <div className="muted small">Recorded audio preview</div>
+            <div>
+              <div className="muted small">Recorded audio preview</div>
+              {audioBlob && (
+                <div className="muted tiny">
+                  {audioFileName || getAudioFileName(audioBlob)} • {getAudioMimeType(audioBlob)} • {formatFileSize(audioBlob.size)}
+                </div>
+              )}
+            </div>
             <audio controls src={audioUrl} style={{ width: '100%' }} />
           </div>
         )}
