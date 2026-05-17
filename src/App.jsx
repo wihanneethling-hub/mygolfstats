@@ -59,6 +59,10 @@ function getCourseParByHole(courseLayouts, course, tees, holeNumber) {
   return getCourseLayout(courseLayouts, course, tees)?.parByHole?.[holeNumber - 1] || null;
 }
 
+function isDevelopmentMode() {
+  return typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+}
+
 function createDefaultParByHole() {
   return Array.from({ length: 18 }, (_, index) => initialHoles[index]?.par || 4);
 }
@@ -325,6 +329,21 @@ function normalizeRecapText(text) {
     .replace(/\bone putt\b/g, '1 putt')
     .replace(/\btwo putts?\b/g, '2 putt')
     .replace(/\bthree putts?\b/g, '3 putt')
+    .replace(/\bone-putted\b/g, '1 putt')
+    .replace(/\btwo-putted\b/g, '2 putt')
+    .replace(/\bthree-putted\b/g, '3 putt')
+    .replace(/\beight feet\b/g, '8 feet')
+    .replace(/\beight foot\b/g, '8 foot')
+    .replace(/\beight ft\b/g, '8 ft')
+    .replace(/\bten feet\b/g, '10 feet')
+    .replace(/\bten foot\b/g, '10 foot')
+    .replace(/\bten ft\b/g, '10 ft')
+    .replace(/\bfifteen feet\b/g, '15 feet')
+    .replace(/\bfifteen foot\b/g, '15 foot')
+    .replace(/\bfifteen ft\b/g, '15 ft')
+    .replace(/\bthirty feet\b/g, '30 feet')
+    .replace(/\bthirty foot\b/g, '30 foot')
+    .replace(/\bthirty ft\b/g, '30 ft')
     .replace(/\bone butt\b/g, '1 putt')
     .replace(/\btwo butt\b/g, '2 putt')
     .replace(/\bthree butt\b/g, '3 putt')
@@ -359,40 +378,51 @@ function splitRecapIntoHoleLines(text) {
   const normalized = normalizeRecapText(text);
 
   const lines = normalized
-    .replace(/\b(hole\s*\d{1,2})\b/g, '|||$1')
+    .replace(/(^|\s)(hole\s*\d{1,2})\b/g, '$1|||$2')
     .split('|||')
     .map((line) => line.trim())
     .filter(Boolean);
 
-  // Step 2: merge duplicate hole segments
   const mergedLines = [];
+  const holeIndexes = new Map();
+  const hasHoleLines = lines.some((line) => /\bhole\s*(\d{1,2})\b/.test(line));
 
   lines.forEach((line) => {
     const holeMatch = line.match(/\bhole\s*(\d{1,2})\b/);
     const currentHole = holeMatch ? Number(holeMatch[1]) : null;
 
-    const previousLine = mergedLines[mergedLines.length - 1];
-    const previousMatch = previousLine?.match(/\bhole\s*(\d{1,2})\b/);
-    const previousHole = previousMatch ? Number(previousMatch[1]) : null;
-
-    if (currentHole && previousHole && currentHole === previousHole) {
-      mergedLines[mergedLines.length - 1] = `${previousLine} ${line}`;
-    } else {
-      mergedLines.push(line);
+    if (!currentHole && hasHoleLines) {
+      return;
     }
+
+    if (currentHole && holeIndexes.has(currentHole)) {
+      const existingIndex = holeIndexes.get(currentHole);
+      mergedLines[existingIndex] = `${mergedLines[existingIndex]} ${line}`;
+      return;
+    }
+
+    if (currentHole) {
+      holeIndexes.set(currentHole, mergedLines.length);
+    }
+    mergedLines.push(line);
   });
 
   return mergedLines;
 }
 
 function getApproachText(line) {
-  const approachStart = line.search(/seven iron|7 iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|chip|chipped|hit to|to \d+\s*(?:ft|feet|foot)/);
+  const approachStart = line.search(/seven iron|7 iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|duffed|approach|chip|chipped|hit to|hit it|to \d+\s*(?:ft|feet|foot)/);
   return approachStart >= 0 ? line.slice(approachStart) : line;
 }
 
 function inferApproachMiss(line) {
   const approachText = getApproachText(line);
 
+  if (
+    approachText.includes('middle of the green') ||
+    approachText.includes('to the green') ||
+    approachText.includes('hit the green')
+  ) return 'none';
   if (approachText.includes('short right')) return 'short_right';
   if (approachText.includes('short left')) return 'short_left';
   if (approachText.includes('long right')) return 'long_right';
@@ -401,10 +431,22 @@ function inferApproachMiss(line) {
   if (approachText.includes('right bunker')) return 'right bunker';
   if (/\bmiss(?:ed)?\s+left\b/.test(approachText) || /\bleft of (?:the )?green\b/.test(approachText)) return 'left';
   if (/\bmiss(?:ed)?\s+right\b/.test(approachText) || /\bright of (?:the )?green\b/.test(approachText)) return 'right';
-  if (/\bmiss(?:ed)?\s+short\b/.test(approachText) || /\bcame up short\b/.test(approachText)) return 'short';
+  if (/\bmiss(?:ed)?\s+short\b/.test(approachText) || /\bcame up short\b/.test(approachText) || /\bstill short of (?:the )?green\b/.test(approachText) || /\bduffed\b/.test(approachText)) return 'short';
   if (/\bmiss(?:ed)?\s+long\b/.test(approachText) || /\bwent long\b/.test(approachText)) return 'long';
 
   return 'none';
+}
+
+function extractFirstPuttFt(line) {
+  const patterns = [
+    /\b(?:putted|putt|2 putt|two-putted)\s+from\s+(\d+)\s*(?:ft|feet|foot)\b/,
+    /\b(?:chipped|chip|pitched|pitch)\s+(?:it\s+)?to\s+(\d+)\s*(?:ft|feet|foot)\b(?!\s+past)/,
+    /\b(?:hit|hit it|7 iron|seven iron|wedge|sand wedge|pitching wedge)\s+(?:it\s+)?(?:to|from)\s+(\d+)\s*(?:ft|feet|foot)\b(?!\s+past)/,
+    /\bto\s+(\d+)\s*(?:ft|feet|foot)\b(?!\s+past)/
+  ];
+
+  const match = patterns.map((pattern) => line.match(pattern)).find(Boolean);
+  return match ? Number(match[1]) : 'missing';
 }
 
 function getMissingParClarifications(text, course, tees, courseLayouts = {}) {
@@ -429,29 +471,39 @@ function getMissingParClarifications(text, course, tees, courseLayouts = {}) {
 
 function convertRecapToStructured(text, course, tees, courseLayouts = {}) {
   const mergedLines = splitRecapIntoHoleLines(text);
+  const activeParByHole = getCourseLayout(courseLayouts, course, tees)?.parByHole || null;
 
-  // Step 3: convert each line
+  if (isDevelopmentMode()) {
+    console.log('Converting recap with course layout', {
+      course,
+      tees,
+      activeParByHole
+    });
+  }
+
   const convertedLines = mergedLines.map((line, index) => {
     const holeMatch =
       line.match(/\bhole\s*(\d{1,2})\b/) ||
       line.match(/^(\d{1,2})\b/);
 
     const parMatch = line.match(/\bpar\s*([345])\b/);
-
-    const firstPuttMatch =
-      line.match(/\b(\d+)\s*ft\b/) ||
-      line.match(/\b(\d+)\s*feet\b/) ||
-      line.match(/\b(\d+)\s*foot\b/) ||
-      line.match(/\b(\d+)ft\b/) ||
-      line.match(/\b(\d+)t\b/);
-
     const puttsMatch =
       line.match(/\b([1234])\s*putt\b/) ||
       line.match(/\b([1234])\s*putted\b/);
 
     const hole = holeMatch ? Number(holeMatch[1]) : index + 1;
     const coursePar = getCourseParByHole(courseLayouts, course, tees, hole);
-    const par = parMatch ? Number(parMatch[1]) : coursePar || 4;
+    const explicitPar = parMatch ? Number(parMatch[1]) : null;
+    const par = coursePar || explicitPar || 4;
+
+    if (isDevelopmentMode()) {
+      console.log('Converted hole par', {
+        hole,
+        coursePar,
+        explicitPar,
+        selectedPar: par
+      });
+    }
 
     let putts = puttsMatch ? Number(puttsMatch[1]) : 2;
 
@@ -464,9 +516,8 @@ function convertRecapToStructured(text, course, tees, courseLayouts = {}) {
       putts = 1;
     }
 
-    const firstPuttFt = firstPuttMatch ? Number(firstPuttMatch[1]) : 'missing';
+    const firstPuttFt = extractFirstPuttFt(line);
 
-    // tee logic
     let tee = 'n/a';
     const driveText = line.split(/seven iron|7 iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|chip|chipped/)[0];
 
@@ -809,7 +860,7 @@ function CourseLayoutCorrection({ course, courseLayouts, onRenameCourseLayout })
 }
 
 function normalizeProcessedHole(hole, course, tees, courseLayouts) {
-  const par = hole.par ?? getCourseParByHole(courseLayouts, course, tees, hole.hole) ?? 4;
+  const par = getCourseParByHole(courseLayouts, course, tees, hole.hole) ?? hole.par ?? 4;
   const approachMiss = hole.approachMiss ?? 'none';
   const gir = hole.gir ?? approachMiss === 'none';
   const putts = hole.putts ?? 2;
@@ -818,7 +869,7 @@ function normalizeProcessedHole(hole, course, tees, courseLayouts) {
   return {
     hole: hole.hole,
     par,
-    tee: hole.tee ?? (par === 3 ? 'n/a' : 'unknown_miss'),
+    tee: par === 3 ? 'n/a' : hole.tee ?? 'unknown_miss',
     gir,
     approachMiss,
     upAndDown: hole.upAndDown ?? false,
