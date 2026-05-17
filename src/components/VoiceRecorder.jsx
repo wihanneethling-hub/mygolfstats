@@ -80,9 +80,10 @@ function blobToBase64(blob) {
   });
 }
 
-export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
+export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRoundProcessed }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingState, setProcessingState] = useState('idle');
   const [isSupported, setIsSupported] = useState(true);
   const [audioUrl, setAudioUrl] = useState('');
   const [audioBlob, setAudioBlob] = useState(null);
@@ -100,6 +101,7 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
   const audioUrlRef = useRef('');
   const startedAtRef = useRef(0);
   const silentSinceRef = useRef(null);
+  const processingKeyRef = useRef('');
 
   useEffect(() => {
     if (!supportsAudioRecording()) {
@@ -190,6 +192,7 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
 
     try {
       setError('');
+      setProcessingState('recording');
       setStatus('Listening. Stop talking and I will process the recap automatically.');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -226,7 +229,7 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
         setAudioUrl(url);
-        processRoundAudio(blob, fileName);
+        transcribeAudio(blob, fileName);
       };
 
       mediaRecorderRef.current = mediaRecorder;
@@ -261,6 +264,8 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
     setAudioBlob(null);
     setAudioFileName('');
     setError('');
+    setProcessingState('idle');
+    processingKeyRef.current = '';
     setStatus('Ready to record a round recap.');
     revokeAudioUrl();
     setAudioUrl('');
@@ -284,11 +289,12 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
     setAudioBlob(file);
     setAudioFileName(file.name);
     setError('');
-    setStatus('Audio file ready. Use Transcribe only, or process it as a round recap.');
+    setStatus('Audio file selected. Transcribing...');
     revokeAudioUrl();
     const url = URL.createObjectURL(file);
     audioUrlRef.current = url;
     setAudioUrl(url);
+    transcribeAudio(file, file.name);
   }
 
   async function sendAudio(blob, endpoint, fileName = getAudioFileName(blob)) {
@@ -326,40 +332,32 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
   }
 
   async function processRoundAudio(blob = audioBlob, fileName = audioFileName || getAudioFileName(blob)) {
+    return transcribeAudio(blob, fileName, true);
+  }
+
+  async function transcribeAudio(blob = audioBlob, fileName = audioFileName || getAudioFileName(blob), force = false) {
     if (!blob || isProcessing) return;
+    const processingKey = `${fileName}:${blob.size}:${blob.type || getAudioMimeType(blob)}`;
+    if (!force && processingKeyRef.current === processingKey && processingState !== 'error') return;
+    processingKeyRef.current = processingKey;
 
     try {
       setIsProcessing(true);
+      setProcessingState('transcribing');
       setError('');
-      setStatus('Transcribing and understanding the round...');
-      const data = await sendAudio(blob, '/.netlify/functions/process-round', fileName);
-      onChange(data.transcript || '');
-      onRoundProcessed?.(data);
-      setStatus(data.clarifications?.length ? 'A few details need clarification.' : 'Round understood. Review and save when ready.');
+      setStatus('Transcribing...');
+      const data = await sendAudio(blob, '/.netlify/functions/transcribe', fileName);
+      const transcriptText = data.text || '';
+      onChange(transcriptText);
+      setProcessingState('converting');
+      onTranscriptReady?.(transcriptText);
+      setProcessingState('parsed');
+      setStatus('Transcript ready. Round parsed for review.');
     } catch (processingError) {
       console.error(processingError);
       setError(processingError.message || buildAudioErrorMessage('Error processing audio', blob, fileName));
+      setProcessingState('error');
       setStatus('Processing failed. You can retry or edit the transcript manually.');
-    } finally {
-      setIsProcessing(false);
-    }
-  }
-
-  async function transcribeAudio() {
-    if (!audioBlob || isProcessing) return;
-    const fileName = audioFileName || getAudioFileName(audioBlob);
-
-    try {
-      setIsProcessing(true);
-      setError('');
-      setStatus('Transcribing audio...');
-      const data = await sendAudio(audioBlob, '/.netlify/functions/transcribe', fileName);
-      onChange(data.text || '');
-      setStatus('Transcript ready. You can process it manually if needed.');
-    } catch (transcriptionError) {
-      console.error(transcriptionError);
-      setError(transcriptionError.message || buildAudioErrorMessage('Error transcribing audio', audioBlob, fileName));
-      setStatus('Transcription failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -434,15 +432,7 @@ export default function VoiceRecorder({ value, onChange, onRoundProcessed }) {
                 onClick={() => processRoundAudio()}
                 disabled={isProcessing}
               >
-                Process again
-              </Button>
-
-              <Button
-                variant="secondary"
-                onClick={transcribeAudio}
-                disabled={isProcessing}
-              >
-                Transcribe only
+                {processingState === 'error' ? 'Retry processing' : 'Process again'}
               </Button>
 
               <Button

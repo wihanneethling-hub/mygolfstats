@@ -8,6 +8,44 @@ import HoleEditor from './components/HoleEditor';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, MiniBar, StatCard, TabButton, Textarea } from './components/UI';
 
 const TEE_OPTIONS = ['Yellow', 'White', 'Red'];
+const APPROACH_CLARIFICATION_OPTIONS = [
+  'none',
+  'short',
+  'long',
+  'left',
+  'right',
+  'short_left',
+  'short_right',
+  'long_left',
+  'long_right',
+  'left bunker',
+  'right bunker'
+];
+const CLARIFICATION_OPTION_LABELS = {
+  none: 'Green',
+  short: 'Short',
+  long: 'Long',
+  left: 'Left',
+  right: 'Right',
+  short_left: 'Short left',
+  short_right: 'Short right',
+  long_left: 'Long left',
+  long_right: 'Long right',
+  'left bunker': 'Left bunker',
+  'right bunker': 'Right bunker'
+};
+
+function getClarificationOptionLabel(field, option) {
+  if (field === 'approachMiss') {
+    return CLARIFICATION_OPTION_LABELS[option] || option;
+  }
+
+  return option;
+}
+
+function isUnknownApproachMiss(value) {
+  return ['', 'missing', 'null', 'unknown', 'unclear', 'unknown_miss'].includes(String(value || '').trim().toLowerCase());
+}
 
 function mergeCourseLayouts(customCourseLayouts = {}) {
   return {
@@ -213,8 +251,8 @@ function parseStructuredRound(text) {
       return;
     }
 
-    const tee = teeRaw || 'n/a';
-    const approachMiss = approachMissRaw || 'none';
+    const tee = par === 3 ? 'n/a' : teeRaw || 'n/a';
+    const approachMiss = isUnknownApproachMiss(approachMissRaw) ? 'unknown' : approachMissRaw;
     const upAndDown = parseBoolean(upAndDownRaw);
     const gir = approachMiss.toLowerCase() === 'none';
 
@@ -995,10 +1033,23 @@ function LogRoundTab({
         const answers = clarifications.filter((item) => item.hole === hole.hole && item.value !== '');
         if (answers.length === 0) return hole;
 
-        return answers.reduce((updated, item) => ({
-          ...updated,
-          [item.field]: parseClarificationValue(item.field, item.value)
-        }), hole);
+        return answers.reduce((updated, item) => {
+          const parsedValue = parseClarificationValue(item.field, item.value);
+          const next = {
+            ...updated,
+            [item.field]: parsedValue
+          };
+
+          if (item.field === 'approachMiss') {
+            next.gir = parsedValue === 'none';
+          }
+
+          if (item.field === 'par' && parsedValue === 3) {
+            next.tee = 'n/a';
+          }
+
+          return next;
+        }, hole);
       })
     );
     setClarifications((current) => current.filter((item) => !item.value));
@@ -1008,33 +1059,42 @@ function LogRoundTab({
     setHoles((current) => current.map((hole) => (hole.hole === holeNumber ? { ...hole, [field]: value } : hole)));
   }
 
-  function handleParseRound() {
-    const result = parseStructuredRound(transcript);
-    if (result.errors.length > 0) {
-      setParseErrors(result.errors);
-      setHasParsed(false);
-      return;
-    }
-    if (result.holes.length === 0) {
-      setParseErrors(['No valid hole lines found.']);
-      setHasParsed(false);
-      return;
-    }
-
-    setHoles(result.holes);
-    setParseErrors([]);
-    setHasParsed(true);
-    setEditingHole(null);
-
+  function buildClarificationsForHoles(parsedHoles, converterClarifications = []) {
     const needsClarification = [];
-    result.holes.forEach((hole) => {
-      const pendingParClarification = pendingConverterClarifications.find((item) => item.hole === hole.hole && item.field === 'par');
+
+    parsedHoles.forEach((hole) => {
+      const pendingParClarification = converterClarifications.find((item) => item.hole === hole.hole && item.field === 'par');
       if (pendingParClarification) {
         needsClarification.push({
           ...pendingParClarification,
           id: needsClarification.length + 1
         });
       }
+
+      if (hole.par === 3) {
+        if (isUnknownApproachMiss(hole.approachMiss)) {
+          needsClarification.push({
+            id: needsClarification.length + 1,
+            hole: hole.hole,
+            field: 'approachMiss',
+            question: `Hole ${hole.hole}: where did your tee shot finish?`,
+            value: '',
+            options: APPROACH_CLARIFICATION_OPTIONS
+          });
+        }
+        if (hole.firstPuttFt === null) {
+          needsClarification.push({
+            id: needsClarification.length + 1,
+            hole: hole.hole,
+            field: 'firstPuttFt',
+            question: `Hole ${hole.hole}: how long was your first putt?`,
+            value: '',
+            options: ['5', '10', '15', '20', '25']
+          });
+        }
+        return;
+      }
+
       if (hole.tee === 'unknown_miss') {
         needsClarification.push({
           id: needsClarification.length + 1,
@@ -1045,6 +1105,7 @@ function LogRoundTab({
           options: ['rough_left', 'rough_right', 'bunker', 'hazard']
         });
       }
+
       if (hole.firstPuttFt === null) {
         needsClarification.push({
           id: needsClarification.length + 1,
@@ -1056,8 +1117,55 @@ function LogRoundTab({
         });
       }
     });
-    setClarifications(needsClarification);
+
+    return needsClarification;
+  }
+
+  function parseStructuredText(structuredText, converterClarifications = []) {
+    const result = parseStructuredRound(structuredText);
+    if (result.errors.length > 0) {
+      setParseErrors(result.errors);
+      setHasParsed(false);
+      return;
+    }
+    if (result.holes.length === 0) {
+      setParseErrors(['No valid hole lines found.']);
+      setHasParsed(false);
+      return;
+    }
+
+    const parsedHoles = result.holes.map((hole) => ({
+      ...hole,
+      tee: hole.par === 3 ? 'n/a' : hole.tee,
+      gir: hole.approachMiss === 'none'
+    }));
+
+    setHoles(parsedHoles);
+    setParseErrors([]);
+    setHasParsed(true);
+    setEditingHole(null);
+    setClarifications(buildClarificationsForHoles(parsedHoles, converterClarifications));
     setPendingConverterClarifications([]);
+  }
+
+  function handleParseRound() {
+    parseStructuredText(transcript, pendingConverterClarifications);
+  }
+
+  function handleTranscriptReady(transcriptText) {
+    const cleanTranscript = transcriptText.trim();
+    if (!cleanTranscript) {
+      setParseErrors(['No transcript was returned from the audio.']);
+      setHasParsed(false);
+      return;
+    }
+
+    setVoiceRecap(cleanTranscript);
+    const converterClarifications = getMissingParClarifications(cleanTranscript, course, tees, courseLayouts);
+    const converted = convertRecapToStructured(cleanTranscript, course, tees, courseLayouts);
+    setPendingConverterClarifications(converterClarifications);
+    setTranscript(converted);
+    parseStructuredText(converted, converterClarifications);
   }
 
   function handleRoundProcessed(data) {
@@ -1145,6 +1253,7 @@ function LogRoundTab({
             <VoiceRecorder
               value={voiceRecap}
               onChange={setVoiceRecap}
+              onTranscriptReady={handleTranscriptReady}
               onRoundProcessed={handleRoundProcessed}
             />
             <details className="manual-tools">
@@ -1223,7 +1332,7 @@ function LogRoundTab({
                         variant={item.value === option ? 'primary' : 'secondary'}
                         onClick={() => handleClarificationAnswer(item.id, option)}
                       >
-                        {option}
+                        {getClarificationOptionLabel(item.field, option)}
                       </Button>
                     ))}
                     {['firstPuttFt', 'par', 'putts', 'score'].includes(item.field) && (
