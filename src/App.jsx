@@ -733,20 +733,28 @@ function UserSetup({ onContinue }) {
   );
 }
 
-function CourseLayoutEditor({ course, tees, courseLayouts, onSaveCourseLayout }) {
+function CourseLayoutCard({
+  course,
+  tees,
+  courseLayouts,
+  onSaveCourseLayout,
+  onResetCourseLayout,
+  onRenameCourseLayout
+}) {
   const hasCourse = Boolean(course.trim());
   const resolvedCourse = resolveCourseName(courseLayouts, course);
-  const hasLayout = Boolean(getCourseLayout(courseLayouts, course));
-  const [isOpen, setIsOpen] = useState(false);
+  const hasLayout = Boolean(getCourseLayout(courseLayouts, course, tees));
   const currentParByHole = getCourseLayout(courseLayouts, course)?.parByHole || createDefaultParByHole();
+  const [isOpen, setIsOpen] = useState(!hasLayout);
   const [draftPars, setDraftPars] = useState(currentParByHole);
   const [saveMessage, setSaveMessage] = useState('');
+  const totalPar = draftPars.reduce((sum, par) => sum + Number(par || 0), 0);
 
   useEffect(() => {
     setDraftPars(currentParByHole);
-    setIsOpen(hasCourse && !hasLayout);
+    setIsOpen(!hasLayout);
     setSaveMessage('');
-  }, [course, tees, currentParByHole.join('-')]);
+  }, [course, tees, hasLayout, currentParByHole.join('-')]);
 
   function updatePar(holeIndex, par) {
     setDraftPars((current) => current.map((value, index) => (index === holeIndex ? par : value)));
@@ -754,12 +762,13 @@ function CourseLayoutEditor({ course, tees, courseLayouts, onSaveCourseLayout })
   }
 
   async function saveLayout() {
-    const result = await onSaveCourseLayout(course, tees, draftPars);
+    const result = await onSaveCourseLayout(resolvedCourse || course, tees, draftPars);
     setSaveMessage(result?.message || 'Course layout saved.');
   }
 
-  if (hasLayout) {
-    return null;
+  async function resetLayout() {
+    const result = await onResetCourseLayout(resolvedCourse || course, tees);
+    setSaveMessage(result?.message || 'Course layout reset.');
   }
 
   return (
@@ -767,16 +776,25 @@ function CourseLayoutEditor({ course, tees, courseLayouts, onSaveCourseLayout })
       <CardContent className="stack">
         <div className="row-between">
           <div>
-            <div className="title-sm">Course holes</div>
+            <div className="title-sm">Course layout</div>
             <div className="muted small">
               {hasCourse
-                ? 'No layout found yet. Add the pars before logging this course.'
+                ? `${hasLayout ? 'Layout loaded' : 'No saved layout yet'} for ${resolvedCourse || course}.`
                 : 'Enter a course to add hole pars.'}
             </div>
           </div>
-          <Button variant="primary" onClick={() => setIsOpen((current) => !current)}>
-            {isOpen ? 'Close holes' : 'Add course holes'}
+          <Button variant="secondary" onClick={() => setIsOpen((current) => !current)}>
+            {isOpen ? 'Hide layout' : 'Show layout'}
           </Button>
+        </div>
+
+        <div className="info-box">
+          <div><strong>Course:</strong> {resolvedCourse || course || 'Not selected'}</div>
+          <div><strong>Tees:</strong> {tees || 'Not selected'}</div>
+          <div><strong>Total par:</strong> {totalPar}</div>
+          <div className="muted tiny">
+            Active pars: {currentParByHole.map((par, index) => `H${index + 1}:${par}`).join(' ')}
+          </div>
         </div>
 
         {isOpen && (
@@ -785,24 +803,36 @@ function CourseLayoutEditor({ course, tees, courseLayouts, onSaveCourseLayout })
               {draftPars.map((par, index) => (
                 <div key={index} className="course-par-cell">
                   <div className="muted tiny">Hole {index + 1}</div>
-                  <div className="course-par-options">
+                  <select
+                    className="input"
+                    value={par}
+                    onChange={(event) => updatePar(index, Number(event.target.value))}
+                  >
                     {[3, 4, 5].map((option) => (
-                      <button
+                      <option
                         key={option}
-                        type="button"
-                        className={`par-chip ${par === option ? 'par-chip-active' : ''}`}
-                        onClick={() => updatePar(index, option)}
+                        value={option}
                       >
                         {option}
-                      </button>
+                      </option>
                     ))}
-                  </div>
+                  </select>
                 </div>
               ))}
             </div>
-            <Button className="btn-lg" onClick={saveLayout}>
-              Save course layout
-            </Button>
+            <div className="row wrap">
+              <Button className="btn-lg" onClick={saveLayout} disabled={!hasCourse}>
+                Save layout
+              </Button>
+              <Button variant="secondary" className="btn-lg" onClick={resetLayout} disabled={!hasCourse}>
+                Reset layout
+              </Button>
+            </div>
+            <CourseLayoutCorrection
+              course={course}
+              courseLayouts={courseLayouts}
+              onRenameCourseLayout={onRenameCourseLayout}
+            />
             {saveMessage && <div className="success-box">{saveMessage}</div>}
           </div>
         )}
@@ -918,6 +948,7 @@ function LogRoundTab({
   courseLayouts,
   savedRounds,
   onSaveCourseLayout,
+  onResetCourseLayout,
   onRenameCourseLayout,
   onSaveRound
 }) {
@@ -1103,15 +1134,12 @@ function LogRoundTab({
                 ))}
               </div>
             </div>
-            <CourseLayoutEditor
+            <CourseLayoutCard
               course={course}
               tees={tees}
               courseLayouts={courseLayouts}
               onSaveCourseLayout={onSaveCourseLayout}
-            />
-            <CourseLayoutCorrection
-              course={course}
-              courseLayouts={courseLayouts}
+              onResetCourseLayout={onResetCourseLayout}
               onRenameCourseLayout={onRenameCourseLayout}
             />
             <VoiceRecorder
@@ -1548,6 +1576,44 @@ async function handleSaveCourseLayout(courseName, teeName, parByHole) {
   }
 }
 
+async function handleResetCourseLayout(courseName, teeName) {
+  const normalizedCourse = resolveCourseName(courseLayouts, courseName).trim();
+  const normalizedTees = teeName.trim();
+
+  if (!normalizedCourse || !normalizedTees) {
+    return { ok: false, message: 'Enter a course name and tees before resetting.' };
+  }
+
+  const starterParByHole = getCourseLayout(starterCourseLayouts, normalizedCourse, normalizedTees)?.parByHole;
+
+  if (starterParByHole) {
+    setCustomCourseLayouts((current) => {
+      if (!current[normalizedCourse]) return current;
+      const next = { ...current };
+      delete next[normalizedCourse];
+      return next;
+    });
+
+    return {
+      ok: true,
+      message: 'Reset to the starter course layout.'
+    };
+  }
+
+  const defaultParByHole = createDefaultParByHole();
+  setCustomCourseLayouts((current) => ({
+    ...current,
+    [normalizedCourse]: {
+      parByHole: defaultParByHole
+    }
+  }));
+
+  return {
+    ok: true,
+    message: 'Reset to the default editable par layout.'
+  };
+}
+
 async function handleRenameCourseLayout(fromCourse, toCourse) {
   const normalizedFrom = fromCourse.trim();
   const normalizedTo = toCourse.trim();
@@ -1672,6 +1738,7 @@ function handleResetData() {
             courseLayouts={courseLayouts}
             savedRounds={savedRounds}
             onSaveCourseLayout={handleSaveCourseLayout}
+            onResetCourseLayout={handleResetCourseLayout}
             onRenameCourseLayout={handleRenameCourseLayout}
             onSaveRound={handleSaveRound}
           />
