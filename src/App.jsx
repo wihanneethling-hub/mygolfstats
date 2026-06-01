@@ -74,8 +74,7 @@ function resolveCourseName(courseLayouts, course) {
   const exactMatch = courseNames.find((courseName) => normalizeLookupValue(courseName) === normalizedCourse);
   if (exactMatch) return exactMatch;
 
-  const partialMatches = courseNames.filter((courseName) => normalizeLookupValue(courseName).includes(normalizedCourse));
-  return partialMatches.length === 1 ? partialMatches[0] : course;
+  return course;
 }
 
 function getCourseLayoutEntry(courseLayouts, course) {
@@ -1045,6 +1044,15 @@ function LogRoundTab({
       .sort()
       .slice(0, 6);
   }, [course, courseLayouts, savedRounds]);
+  const inlineCourseSuggestion = useMemo(() => {
+    const normalizedCourse = normalizeLookupValue(course);
+    if (!normalizedCourse) return '';
+
+    return courseSuggestions.find((courseName) => (
+      normalizeLookupValue(courseName).startsWith(normalizedCourse) &&
+      normalizeLookupValue(courseName) !== normalizedCourse
+    )) || '';
+  }, [course, courseSuggestions]);
 
   function handleClarificationAnswer(id, value) {
     setClarifications((current) => current.map((item) => (item.id === id ? { ...item, value } : item)));
@@ -1318,31 +1326,44 @@ function LogRoundTab({
             <div className="section-kicker">ROUND INFO</div>
             <div className="course-name-wrap">
               <div className="field-label">Course name</div>
-              <textarea
-                value={course || ''}
-                rows={1}
-                onPointerDown={() => {
-                  markCourseManualEntry();
-                  setIsCourseSuggestionsOpen(true);
-                }}
-                onFocus={() => setIsCourseSuggestionsOpen(true)}
-                onBlur={() => setIsCourseSuggestionsOpen(false)}
-                onKeyDown={(event) => {
-                  markCourseManualEntry();
-                  if (event.key === 'Enter') event.preventDefault();
-                }}
-                onPaste={markCourseManualEntry}
-                onDrop={markCourseManualEntry}
-                onChange={handleCourseChange}
-                className="input input-lime input-lg course-name-field"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                inputMode="text"
-                id="round-entry-alpha"
-                name="beta-field-a"
-              />
+              <div className="course-input-shell">
+                {inlineCourseSuggestion && (
+                  <div className="course-inline-suggestion" aria-hidden="true">
+                    <span className="course-inline-prefix">{course}</span>
+                    <span>{inlineCourseSuggestion.slice(course.length)}</span>
+                  </div>
+                )}
+                <textarea
+                  value={course || ''}
+                  rows={1}
+                  onPointerDown={() => {
+                    markCourseManualEntry();
+                    setIsCourseSuggestionsOpen(true);
+                  }}
+                  onFocus={() => setIsCourseSuggestionsOpen(true)}
+                  onBlur={() => setIsCourseSuggestionsOpen(false)}
+                  onKeyDown={(event) => {
+                    markCourseManualEntry();
+                    if ((event.key === 'Tab' || event.key === 'Enter') && inlineCourseSuggestion) {
+                      event.preventDefault();
+                      selectCourseSuggestion(inlineCourseSuggestion);
+                      return;
+                    }
+                    if (event.key === 'Enter') event.preventDefault();
+                  }}
+                  onPaste={markCourseManualEntry}
+                  onDrop={markCourseManualEntry}
+                  onChange={handleCourseChange}
+                  className="input input-lime input-lg course-name-field"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  inputMode="text"
+                  id="round-entry-alpha"
+                  name="beta-field-a"
+                />
+              </div>
               {isCourseSuggestionsOpen && courseSuggestions.length > 0 && (
                 <div className="course-suggestions" role="listbox" aria-label="Saved course layouts">
                   {courseSuggestions.map((courseName) => (

@@ -147,6 +147,36 @@ button, input, textarea { font: inherit; }
   position: relative;
 }
 
+.course-input-shell {
+  position: relative;
+  border-radius: 14px;
+  background: #f0f3cf;
+}
+
+.course-input-shell .course-name-field {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+.course-inline-suggestion {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 14px 16px;
+  color: #859078;
+  font-size: 20px;
+  line-height: 1.2;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.course-inline-prefix {
+  visibility: hidden;
+}
+
 .course-suggestions {
   position: absolute;
   z-index: 10;
