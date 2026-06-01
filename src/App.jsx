@@ -1015,6 +1015,7 @@ function LogRoundTab({
 }) {
   const [parseErrors, setParseErrors] = useState([]);
   const [pendingConverterClarifications, setPendingConverterClarifications] = useState([]);
+  const [isCourseSuggestionsOpen, setIsCourseSuggestionsOpen] = useState(false);
   const courseManualEntryRef = useRef(false);
 
   const currentStats = useMemo(() => calcStatsFromHoles(holes), [holes]);
@@ -1033,6 +1034,18 @@ function LogRoundTab({
   }, [holes]);
 
   const maxMissValue = Math.max(...Object.values(missPattern), 1);
+  const courseSuggestions = useMemo(() => {
+    const normalizedCourse = normalizeLookupValue(course);
+
+    return Array.from(new Set([
+      ...Object.keys(courseLayouts),
+      ...getPlayedCourseSuggestions(savedRounds)
+    ]))
+      .filter((courseName) => !normalizedCourse || normalizeLookupValue(courseName).includes(normalizedCourse))
+      .sort()
+      .slice(0, 6);
+  }, [course, courseLayouts, savedRounds]);
+
   function handleClarificationAnswer(id, value) {
     setClarifications((current) => current.map((item) => (item.id === id ? { ...item, value } : item)));
   }
@@ -1090,6 +1103,13 @@ function LogRoundTab({
     }
 
     setCourse(event.target.value.replace(/\s*\n\s*/g, ' '));
+    setIsCourseSuggestionsOpen(true);
+  }
+
+  function selectCourseSuggestion(courseName) {
+    courseManualEntryRef.current = true;
+    setCourse(courseName);
+    setIsCourseSuggestionsOpen(false);
   }
 
   function buildClarificationsForHoles(parsedHoles, converterClarifications = []) {
@@ -1296,12 +1316,17 @@ function LogRoundTab({
         <CardContent className="stack">
           <div className="stack">
             <div className="section-kicker">ROUND INFO</div>
-            <div>
+            <div className="course-name-wrap">
               <div className="field-label">Course name</div>
               <textarea
                 value={course || ''}
                 rows={1}
-                onPointerDown={markCourseManualEntry}
+                onPointerDown={() => {
+                  markCourseManualEntry();
+                  setIsCourseSuggestionsOpen(true);
+                }}
+                onFocus={() => setIsCourseSuggestionsOpen(true)}
+                onBlur={() => setIsCourseSuggestionsOpen(false)}
                 onKeyDown={(event) => {
                   markCourseManualEntry();
                   if (event.key === 'Enter') event.preventDefault();
@@ -1318,6 +1343,24 @@ function LogRoundTab({
                 id="round-entry-alpha"
                 name="beta-field-a"
               />
+              {isCourseSuggestionsOpen && courseSuggestions.length > 0 && (
+                <div className="course-suggestions" role="listbox" aria-label="Saved course layouts">
+                  {courseSuggestions.map((courseName) => (
+                    <button
+                      key={courseName}
+                      type="button"
+                      className="course-suggestion"
+                      role="option"
+                      aria-selected={normalizeLookupValue(courseName) === normalizeLookupValue(course)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectCourseSuggestion(courseName)}
+                    >
+                      <span>{courseName}</span>
+                      <span className="muted tiny">Saved layout</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <div className="field-label">Tees</div>

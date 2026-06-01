@@ -143,6 +143,47 @@ button, input, textarea { font: inherit; }
   resize: none;
 }
 
+.course-name-wrap {
+  position: relative;
+}
+
+.course-suggestions {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  border: 1px solid #d9e0da;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(35,52,42,0.12);
+}
+
+.course-suggestion {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid #eef1ed;
+  background: #fff;
+  padding: 12px 14px;
+  color: #17201b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.course-suggestion:last-child {
+  border-bottom: 0;
+}
+
+.course-suggestion:hover,
+.course-suggestion[aria-selected="true"] {
+  background: #f4f8f3;
+}
+
 .input-lime {
   background: #f0f3cf;
   border-color: #d7dda6;
