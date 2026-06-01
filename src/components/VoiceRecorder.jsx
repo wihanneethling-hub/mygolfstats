@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Mic, RotateCcw, Square, Upload } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle, Textarea } from './UI';
 
 const SILENCE_THRESHOLD = 0.018;
@@ -381,7 +382,7 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
   }
 
   return (
-    <Card>
+    <Card className="voice-recap-card">
       <CardHeader>
         <CardTitle>Voice recap</CardTitle>
       </CardHeader>
@@ -402,24 +403,27 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
         <Textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          className={`textarea voice-transcript ${value.trim() ? 'voice-transcript-filled' : 'voice-transcript-empty'}`}
           placeholder="Your transcript will appear here after the round recap is processed."
         />
 
         <div className="recorder-actions">
           {isRecording ? (
             <Button
-              className="btn-lg grow"
+              className="record-button record-button-live"
               onClick={stopRecording}
             >
-              Stop and process
+              <Square size={24} fill="currentColor" />
+              <span>Stop and process</span>
             </Button>
           ) : (
             <Button
-              className="btn-lg grow"
+              className="record-button"
               onClick={startRecording}
               disabled={!isSupported || isProcessing}
             >
-              {isProcessing ? 'Processing...' : audioBlob ? 'Record again' : 'Record recap'}
+              <Mic size={28} />
+              <span>{isProcessing ? 'Processing...' : audioBlob ? 'Record again' : 'Record recap'}</span>
             </Button>
           )}
         </div>
@@ -436,6 +440,7 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
             onClick={() => fileInputRef.current?.click()}
             disabled={isRecording || isProcessing}
           >
+            <Upload size={16} />
             Upload audio file
           </Button>
           <input
@@ -455,6 +460,7 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
                 onClick={() => processRoundAudio()}
                 disabled={isProcessing}
               >
+                <RotateCcw size={15} />
                 {processingState === 'error' ? 'Retry processing' : 'Process again'}
               </Button>
 

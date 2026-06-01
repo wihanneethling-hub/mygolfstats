@@ -1343,8 +1343,8 @@ function LogRoundTab({
                 </div>
               </div>
             </details>
-            <div className="row wrap">
-              <Button variant="secondary" className="btn-lg" onClick={resetDraft}>Reset</Button>
+            <div className="draft-actions">
+              <Button variant="secondary" className="quiet-action" onClick={resetDraft}>Reset round draft</Button>
             </div>
 
             {parseErrors.length > 0 && (
