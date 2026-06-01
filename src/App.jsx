@@ -453,7 +453,7 @@ function splitRecapIntoHoleLines(text) {
 }
 
 function getApproachText(line) {
-  const approachStart = line.search(/seven iron|7 iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|duffed|approach|chip|chipped|hit to|hit it|to \d+\s*(?:ft|feet|foot)/);
+  const approachStart = line.search(/(?:\w+|\d+)\s+iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|duffed|approach|chip|chipped|hit to|hit it|to \d+\s*(?:ft|feet|foot)/);
   return approachStart >= 0 ? line.slice(approachStart) : line;
 }
 
@@ -473,7 +473,7 @@ function inferApproachMiss(line) {
   if (approachText.includes('right bunker')) return 'right bunker';
   if (/\bmiss(?:ed)?\s+left\b/.test(approachText) || /\bleft of (?:the )?green\b/.test(approachText)) return 'left';
   if (/\bmiss(?:ed)?\s+right\b/.test(approachText) || /\bright of (?:the )?green\b/.test(approachText)) return 'right';
-  if (/\bmiss(?:ed)?\s+short\b/.test(approachText) || /\bcame up short\b/.test(approachText) || /\bstill short of (?:the )?green\b/.test(approachText) || /\bduffed\b/.test(approachText)) return 'short';
+  if (/\bmiss(?:ed)?\s+short\b/.test(approachText) || /\bcame up short\b/.test(approachText) || /\b(?:still\s+)?short of (?:the )?green\b/.test(approachText) || /\bduffed\b/.test(approachText)) return 'short';
   if (/\bmiss(?:ed)?\s+long\b/.test(approachText) || /\bwent long\b/.test(approachText)) return 'long';
 
   return 'none';
@@ -561,7 +561,7 @@ function convertRecapToStructured(text, course, tees, courseLayouts = {}) {
     const firstPuttFt = extractFirstPuttFt(line);
 
     let tee = 'n/a';
-    const driveText = line.split(/seven iron|7 iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|chip|chipped/)[0];
+    const driveText = line.split(/(?:\w+|\d+)\s+iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|chip|chipped/)[0];
 
     if (par === 4 || par === 5) {
       if (driveText.includes('fairway')) tee = 'fairway';
@@ -966,6 +966,21 @@ function normalizeClarifications(clarifications = []) {
   }));
 }
 
+function holesToStructuredRound(holes = []) {
+  return holes
+    .map((hole) => [
+      hole.hole,
+      hole.par,
+      hole.tee ?? 'unknown_miss',
+      hole.approachMiss ?? 'unknown',
+      hole.upAndDown ?? false,
+      hole.putts ?? 'missing',
+      hole.firstPuttFt ?? 'missing',
+      hole.score ?? 'missing'
+    ].join(','))
+    .join('\n');
+}
+
 function parseClarificationValue(field, value) {
   if (['par', 'putts', 'score'].includes(field)) {
     return Number(value) || 0;
@@ -1176,7 +1191,7 @@ function LogRoundTab({
     parseStructuredText(transcript, pendingConverterClarifications);
   }
 
-  function handleTranscriptReady(transcriptText) {
+  async function handleTranscriptReady(transcriptText) {
     if (!course.trim()) {
       setVoiceRecap(transcriptText.trim());
       setParseErrors(['Please enter or select a course first.']);
@@ -1192,11 +1207,36 @@ function LogRoundTab({
     }
 
     setVoiceRecap(cleanTranscript);
-    const converterClarifications = getMissingParClarifications(cleanTranscript, course, tees, courseLayouts);
-    const converted = convertRecapToStructured(cleanTranscript, course, tees, courseLayouts);
-    setPendingConverterClarifications(converterClarifications);
-    setTranscript(converted);
-    parseStructuredText(converted, converterClarifications);
+    try {
+      const activeParByHole = getCourseLayout(courseLayouts, course, tees)?.parByHole || null;
+      const response = await fetch('/.netlify/functions/process-round', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          transcript: cleanTranscript,
+          course,
+          tees,
+          parByHole: activeParByHole
+        })
+      });
+      const responseText = await response.text();
+      const data = responseText ? JSON.parse(responseText) : {};
+
+      if (!response.ok) {
+        throw new Error(data.error || 'AI round interpretation failed');
+      }
+
+      handleRoundProcessed(data);
+    } catch (error) {
+      console.warn('AI round interpretation failed. Using local converter fallback.', error);
+      const converterClarifications = getMissingParClarifications(cleanTranscript, course, tees, courseLayouts);
+      const converted = convertRecapToStructured(cleanTranscript, course, tees, courseLayouts);
+      setPendingConverterClarifications(converterClarifications);
+      setTranscript(converted);
+      parseStructuredText(converted, converterClarifications);
+    }
   }
 
   function handleRoundProcessed(data) {
@@ -1215,14 +1255,15 @@ function LogRoundTab({
     const processedCourse = data.course || course;
     const processedTees = data.tees || tees;
 
-    setTranscript(convertRecapToStructured(data.transcript || '', processedCourse, processedTees, courseLayouts));
-    setHoles(data.holes.map((hole) => normalizeProcessedHole(hole, processedCourse, processedTees, courseLayouts)).sort((a, b) => a.hole - b.hole));
+    const normalizedHoles = data.holes.map((hole) => normalizeProcessedHole(hole, processedCourse, processedTees, courseLayouts)).sort((a, b) => a.hole - b.hole);
+    setTranscript(holesToStructuredRound(normalizedHoles));
+    setHoles(normalizedHoles);
     setClarifications(normalizeClarifications(data.clarifications));
     setParseErrors([]);
     setHasParsed(true);
     setEditingHole(null);
 
-    if (data.course) {
+    if (data.course && !course.trim()) {
       console.log('Auto setCourse called with', processedCourse);
       setCourse(processedCourse);
     }
@@ -1235,6 +1276,7 @@ function LogRoundTab({
     setPendingConverterClarifications([]);
     setHoles([]);
     setTranscript('');
+    setVoiceRecap('');
     courseManualEntryRef.current = false;
     setCourse('');
     setTees('Yellow');

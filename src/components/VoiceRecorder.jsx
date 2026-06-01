@@ -368,7 +368,7 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
       valueRef.current = combinedTranscript;
       onChange(combinedTranscript);
       setProcessingState('converting');
-      onTranscriptReady?.(combinedTranscript, { latestSegment: transcriptText });
+      await onTranscriptReady?.(combinedTranscript, { latestSegment: transcriptText });
       setProcessingState('parsed');
       setStatus('Transcript appended. Record another segment or review the round below.');
     } catch (processingError) {

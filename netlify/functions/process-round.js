@@ -137,8 +137,15 @@ function addFallbackClarifications(round) {
   round.holes.forEach((hole) => {
     const missing = [];
     if (!hole.par) missing.push(buildClarification(hole.hole, 'par', `Hole ${hole.hole}: what was the par?`, ['3', '4', '5']));
-    if (!hole.tee) missing.push(buildClarification(hole.hole, 'tee', `Hole ${hole.hole}: where did the tee shot finish?`, TEE_VALUES));
-    if (!hole.approachMiss) missing.push(buildClarification(hole.hole, 'approachMiss', `Hole ${hole.hole}: where did the approach finish?`, MISS_VALUES));
+    if (hole.par === 3) {
+      hole.tee = 'n/a';
+      if (!hole.approachMiss) {
+        missing.push(buildClarification(hole.hole, 'approachMiss', `Hole ${hole.hole}: where did your tee shot finish?`, MISS_VALUES));
+      }
+    } else {
+      if (!hole.tee) missing.push(buildClarification(hole.hole, 'tee', `Hole ${hole.hole}: where did the tee shot finish?`, TEE_VALUES));
+      if (!hole.approachMiss) missing.push(buildClarification(hole.hole, 'approachMiss', `Hole ${hole.hole}: where did the approach finish?`, MISS_VALUES));
+    }
     if (hole.gir === null) missing.push(buildClarification(hole.hole, 'gir', `Hole ${hole.hole}: did you hit the green in regulation?`, ['true', 'false']));
     if (hole.upAndDown === null) missing.push(buildClarification(hole.hole, 'upAndDown', `Hole ${hole.hole}: did you get up and down?`, ['true', 'false']));
     if (hole.putts === null) missing.push(buildClarification(hole.hole, 'putts', `Hole ${hole.hole}: how many putts?`, ['1', '2', '3']));
@@ -163,7 +170,30 @@ function addFallbackClarifications(round) {
   return round;
 }
 
-async function extractRound(transcript) {
+function applyCourseContext(round, { course, tees, parByHole } = {}) {
+  const hasCourseLayout = Array.isArray(parByHole) && parByHole.length === 18;
+
+  return {
+    ...round,
+    course: course || round.course,
+    tees: tees || round.tees,
+    holes: round.holes.map((hole) => {
+      const par = hasCourseLayout ? parByHole[hole.hole - 1] : hole.par;
+
+      return {
+        ...hole,
+        par,
+        tee: par === 3 ? 'n/a' : hole.tee
+      };
+    })
+  };
+}
+
+async function extractRound(transcript, context = {}) {
+  const activeLayoutText = Array.isArray(context.parByHole) && context.parByHole.length === 18
+    ? `Active course layout pars by hole: ${context.parByHole.map((par, index) => `H${index + 1}:${par}`).join(' ')}. These pars are the source of truth.`
+    : 'No active course layout was supplied. Use spoken pars where available and clarify missing pars.';
+
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
@@ -179,6 +209,10 @@ async function extractRound(transcript) {
             'You extract golf round recaps into app data.',
             'Use only facts stated or strongly implied by the transcript.',
             'Return holes in ascending order and include any hole the user describes.',
+            'Keep the drive, approach, recovery shots, putts, and gross score separate.',
+            'A drive in the fairway followed by an approach short of the green means tee fairway and approachMiss short.',
+            'A chip to 15 feet followed by two putts means firstPuttFt 15 and putts 2.',
+            'When the golfer states a gross score, use that exact score instead of calculating a different score.',
             'For par 3 tee values use n/a unless the transcript says otherwise.',
             'If an approach was on the green, use approachMiss none and gir true.',
             'If a needed field is missing or ambiguous, set it to null and add one concise clarification.',
@@ -188,7 +222,12 @@ async function extractRound(transcript) {
         },
         {
           role: 'user',
-          content: `Transcript:\n${transcript}`
+          content: [
+            `Selected course: ${context.course || 'not supplied'}`,
+            `Selected tees: ${context.tees || 'not supplied'}`,
+            activeLayoutText,
+            `Transcript:\n${transcript}`
+          ].join('\n')
         }
       ],
       text: {
@@ -213,7 +252,7 @@ async function extractRound(transcript) {
     throw new Error('Round extraction returned no data');
   }
 
-  return addFallbackClarifications(JSON.parse(outputText));
+  return addFallbackClarifications(applyCourseContext(JSON.parse(outputText), context));
 }
 
 export async function handler(event) {
@@ -231,7 +270,10 @@ export async function handler(event) {
       audioBase64,
       mimeType = 'audio/webm',
       fileName = 'round-recap.webm',
-      transcript: providedTranscript
+      transcript: providedTranscript,
+      course,
+      tees,
+      parByHole
     } = body;
 
     if (!providedTranscript && !audioBase64) {
@@ -244,7 +286,7 @@ export async function handler(event) {
       return jsonResponse(400, { error: 'No transcript available to process' });
     }
 
-    const round = await extractRound(transcript);
+    const round = await extractRound(transcript, { course, tees, parByHole });
 
     return jsonResponse(200, {
       transcript,
