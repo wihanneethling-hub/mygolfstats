@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import VoiceRecorder from './components/VoiceRecorder';
 import { starterCourseLayouts } from './courseData';
-import { initialClarifications, initialHoles } from './data';
+import { initialHoles } from './data';
 import { clearState, loadState, saveState } from './storage';
 import { average, buildSavedRound, calcStatsFromHoles, formatToPar } from './utils';
 import HoleEditor from './components/HoleEditor';
@@ -116,6 +116,10 @@ function getPlayedTeeSuggestions(rounds = [], course) {
       .map((round) => round.tees)
       .filter(Boolean))
   ).sort();
+}
+
+function isPar3CourseRound(round) {
+  return Array.isArray(round?.holes) && round.holes.length > 0 && round.holes.every((hole) => hole.par === 3);
 }
 
 function downloadTextFile(filename, text, type) {
@@ -809,6 +813,10 @@ function CourseLayoutCard({
     setSaveMessage(result?.message || 'Course layout reset.');
   }
 
+  if (!hasCourse) {
+    return null;
+  }
+
   return (
     <Card>
       <CardContent className="stack">
@@ -992,6 +1000,7 @@ function LogRoundTab({
 }) {
   const [parseErrors, setParseErrors] = useState([]);
   const [pendingConverterClarifications, setPendingConverterClarifications] = useState([]);
+  const courseManualEntryRef = useRef(false);
 
   const currentStats = useMemo(() => calcStatsFromHoles(holes), [holes]);
 
@@ -1009,20 +1018,6 @@ function LogRoundTab({
   }, [holes]);
 
   const maxMissValue = Math.max(...Object.values(missPattern), 1);
-  const courseSuggestions = useMemo(() => {
-    return Array.from(new Set([
-      ...Object.keys(courseLayouts),
-      ...getPlayedCourseSuggestions(savedRounds)
-    ])).sort();
-  }, [courseLayouts, savedRounds]);
-  useEffect(() => {
-    const resolvedCourse = resolveCourseName(courseLayouts, course);
-
-    if (resolvedCourse && resolvedCourse !== course && getCourseLayout(courseLayouts, resolvedCourse)) {
-      setCourse(resolvedCourse);
-    }
-  }, [course, courseLayouts, setCourse]);
-
   function handleClarificationAnswer(id, value) {
     setClarifications((current) => current.map((item) => (item.id === id ? { ...item, value } : item)));
   }
@@ -1057,6 +1052,29 @@ function LogRoundTab({
 
   function updateHole(holeNumber, field, value) {
     setHoles((current) => current.map((hole) => (hole.hole === holeNumber ? { ...hole, [field]: value } : hole)));
+  }
+
+  useEffect(() => {
+    if (!courseManualEntryRef.current && course) {
+      console.log('Auto setCourse called with', course);
+      setCourse('');
+    }
+  }, [course, setCourse]);
+
+  function markCourseManualEntry() {
+    courseManualEntryRef.current = true;
+  }
+
+  function handleCourseChange(event) {
+    if (!courseManualEntryRef.current) {
+      const attemptedValue = event.target.value;
+      event.currentTarget.value = '';
+      console.log('Auto setCourse called with', attemptedValue);
+      setCourse('');
+      return;
+    }
+
+    setCourse(event.target.value.replace(/\s*\n\s*/g, ' '));
   }
 
   function buildClarificationsForHoles(parsedHoles, converterClarifications = []) {
@@ -1122,6 +1140,12 @@ function LogRoundTab({
   }
 
   function parseStructuredText(structuredText, converterClarifications = []) {
+    if (!course.trim()) {
+      setParseErrors(['Please enter or select a course first.']);
+      setHasParsed(false);
+      return;
+    }
+
     const result = parseStructuredRound(structuredText);
     if (result.errors.length > 0) {
       setParseErrors(result.errors);
@@ -1153,6 +1177,13 @@ function LogRoundTab({
   }
 
   function handleTranscriptReady(transcriptText) {
+    if (!course.trim()) {
+      setVoiceRecap(transcriptText.trim());
+      setParseErrors(['Please enter or select a course first.']);
+      setHasParsed(false);
+      return;
+    }
+
     const cleanTranscript = transcriptText.trim();
     if (!cleanTranscript) {
       setParseErrors(['No transcript was returned from the audio.']);
@@ -1169,6 +1200,12 @@ function LogRoundTab({
   }
 
   function handleRoundProcessed(data) {
+    if (!course.trim() && !data.course) {
+      setParseErrors(['Please enter or select a course first.']);
+      setHasParsed(false);
+      return;
+    }
+
     if (!data.holes?.length) {
       setParseErrors(['The recap was transcribed, but no hole data could be extracted. Try adding hole numbers and scores.']);
       setHasParsed(false);
@@ -1185,17 +1222,21 @@ function LogRoundTab({
     setHasParsed(true);
     setEditingHole(null);
 
-    if (data.course) setCourse(processedCourse);
+    if (data.course) {
+      console.log('Auto setCourse called with', processedCourse);
+      setCourse(processedCourse);
+    }
     if (data.tees) setTees(processedTees);
   }
 
   function resetDraft() {
     setHasParsed(false);
-    setClarifications(initialClarifications);
+    setClarifications([]);
     setPendingConverterClarifications([]);
-    setHoles(initialHoles);
-    setTranscript(sampleStructuredRound());
-    setCourse('Devonvale Golf Club');
+    setHoles([]);
+    setTranscript('');
+    courseManualEntryRef.current = false;
+    setCourse('');
     setTees('Yellow');
     setEditingHole(null);
     setParseErrors([]);
@@ -1215,17 +1256,26 @@ function LogRoundTab({
             <div className="section-kicker">ROUND INFO</div>
             <div>
               <div className="field-label">Course name</div>
-              <Input
-                value={course}
-                onChange={(e) => setCourse(e.target.value)}
-                className="input-lime input-lg"
-                list="course-suggestions"
+              <textarea
+                value={course || ''}
+                rows={1}
+                onPointerDown={markCourseManualEntry}
+                onKeyDown={(event) => {
+                  markCourseManualEntry();
+                  if (event.key === 'Enter') event.preventDefault();
+                }}
+                onPaste={markCourseManualEntry}
+                onDrop={markCourseManualEntry}
+                onChange={handleCourseChange}
+                className="input input-lime input-lg course-name-field"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                inputMode="text"
+                id="round-entry-alpha"
+                name="beta-field-a"
               />
-              <datalist id="course-suggestions">
-                {courseSuggestions.map((courseName) => (
-                  <option key={courseName} value={courseName} />
-                ))}
-              </datalist>
             </div>
             <div>
               <div className="field-label">Tees</div>
@@ -1234,7 +1284,7 @@ function LogRoundTab({
                   <button
                     key={teeName}
                     type="button"
-                    className={`segment-button ${tees === teeName ? 'segment-active' : ''}`}
+                    className={`segment-button segment-${teeName.toLowerCase()} ${tees === teeName ? 'segment-active' : ''}`}
                     onClick={() => setTees(teeName)}
                   >
                     {teeName}
@@ -1267,6 +1317,10 @@ function LogRoundTab({
                     <Button
                       variant="secondary"
                       onClick={() => {
+                        if (!course.trim()) {
+                          setParseErrors(['Please enter or select a course first.']);
+                          return;
+                        }
                         const converted = convertRecapToStructured(voiceRecap.trim(), course, tees, courseLayouts);
                         setPendingConverterClarifications(getMissingParClarifications(voiceRecap.trim(), course, tees, courseLayouts));
                         setTranscript(converted);
@@ -1409,6 +1463,7 @@ function HistoryTab({ rounds, selectedRoundId, setSelectedRoundId, onDeleteRound
                 <div className="muted small">{round.date}</div>
               </div>
               <div className="badge-row">
+                <Badge>Score {round.score}</Badge>
                 <Badge>To par {formatToPar(round.toPar)}</Badge>
                 <Badge>FIR {round.fairwaysPct}%</Badge>
                 <Badge>GIR {round.girPct}%</Badge>
@@ -1530,13 +1585,20 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
   const hasRounds = filtered.length > 0;
   const dashboardStats = useMemo(() => {
     if (filtered.length === 0) {
-      return { fairwaysPct: 0, girPct: 0, putts: '0.0', toPar: '0.0', upAndDownPct: 0 };
+      return { fairwaysPct: 0, girPct: 0, putts: '0.0', toPar: '0.0', scoringAverage: 'N/A', upAndDownPct: 0 };
     }
+
+    const scoringRounds = filtered.filter((round) => !isPar3CourseRound(round) && Number.isFinite(Number(round.score)));
+    const scoringAverage = scoringRounds.length
+      ? (scoringRounds.reduce((sum, round) => sum + Number(round.score), 0) / scoringRounds.length).toFixed(1)
+      : 'N/A';
+
     return {
       fairwaysPct: average(filtered, 'fairwaysPct'),
       girPct: average(filtered, 'girPct'),
       putts: (filtered.reduce((sum, r) => sum + r.putts, 0) / filtered.length).toFixed(1),
       toPar: (filtered.reduce((sum, r) => sum + r.toPar, 0) / filtered.length).toFixed(1),
+      scoringAverage,
       upAndDownPct: average(filtered, 'upAndDownPct')
     };
   }, [filtered]);
@@ -1548,6 +1610,7 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
     <div className="stack">
       <div className="grid-stats">
         <StatCard label="Rounds tracked" value={filtered.length} />
+        <StatCard label="Scoring average" value={dashboardStats.scoringAverage} sub="Excludes par 3 courses" />
         <StatCard label="Average to par" value={dashboardStats.toPar} />
         <StatCard label="Overall FIR" value={`${dashboardStats.fairwaysPct}%`} />
         <StatCard label="Overall GIR" value={`${dashboardStats.girPct}%`} />
@@ -1587,12 +1650,12 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
   const [selectedRoundId, setSelectedRoundId] = useState(null);
   const [selectedPlayer, setSelectedPlayer] = useState('');
   const [hasLoadedState, setHasLoadedState] = useState(false);
-  const [course, setCourse] = useState('Devonvale Golf Club');
+  const [course, setCourse] = useState('');
   const [tees, setTees] = useState('Yellow');
   const [transcript, setTranscript] = useState('');
   const [hasParsed, setHasParsed] = useState(false);
-  const [holes, setHoles] = useState(initialHoles);
-  const [clarifications, setClarifications] = useState(initialClarifications);
+  const [holes, setHoles] = useState([]);
+  const [clarifications, setClarifications] = useState([]);
   const [editingHole, setEditingHole] = useState(null);
   const [savedRounds, setSavedRounds] = useState([]);
   const [customCourseLayouts, setCustomCourseLayouts] = useState({});
@@ -1606,14 +1669,39 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
     customCourseLayouts
   }), [savedRounds, selectedPlayer, customCourseLayouts]);
   
+  useEffect(() => {
+    console.log('App initial course', course);
+  }, []);
 
   useEffect(() => {
     const state = loadState();
+    console.log('Loaded state', state);
     if (state?.savedRounds) setSavedRounds(state.savedRounds);
     if (state?.selectedPlayer) setSelectedPlayer(state.selectedPlayer);
     if (state?.customCourseLayouts) setCustomCourseLayouts(state.customCourseLayouts);
+    setCourse('');
     setHasLoadedState(true);
   }, []);
+
+  useEffect(() => {
+    if (!hasLoadedState || course) return;
+
+    const clearVisualAutofill = () => {
+      const input = document.querySelector('.course-name-field');
+      if (input) input.value = '';
+      setCourse('');
+    };
+
+    const frameId = requestAnimationFrame(() => {
+      clearVisualAutofill();
+    });
+    const timeoutId = window.setTimeout(clearVisualAutofill, 250);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [hasLoadedState, selectedPlayer, course]);
 
   useEffect(() => {
     if (!hasLoadedState || !selectedPlayer) return;
@@ -1747,6 +1835,7 @@ async function handleRenameCourseLayout(fromCourse, toCourse) {
   setSavedRounds((current) => current.map((round) => (
     round.course === normalizedFrom ? { ...round, course: normalizedTo } : round
   )));
+  console.log('Auto setCourse called with', normalizedTo);
   setCourse(normalizedTo);
 
   try {
@@ -1805,6 +1894,13 @@ function handleResetData() {
   setSavedRounds([]);
   setSelectedPlayer('');
   setCustomCourseLayouts({});
+  setCourse('');
+  setTees('Yellow');
+  setTranscript('');
+  setVoiceRecap('');
+  setHoles([]);
+  setClarifications([]);
+  setHasParsed(false);
   setSelectedRoundId(null);
   setActiveTab('log');
 }

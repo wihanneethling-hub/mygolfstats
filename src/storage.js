@@ -25,14 +25,38 @@ function stripSeededDemoRounds(state) {
   };
 }
 
+function stripLegacyActiveDraft(state) {
+  if (!state || typeof state !== 'object') return state;
+
+  const {
+    course,
+    tees,
+    draftCourse,
+    draftTees,
+    transcript,
+    voiceRecap,
+    holes,
+    clarifications,
+    hasParsed,
+    ...rest
+  } = state;
+
+  return rest;
+}
+
 export function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
-    const migrated = stripSeededDemoRounds(parsed);
-    if (migrated !== parsed || migrated.savedRounds?.length !== parsed.savedRounds?.length) {
+    const withoutDraft = stripLegacyActiveDraft(parsed);
+    const migrated = stripSeededDemoRounds(withoutDraft);
+    if (
+      migrated !== parsed ||
+      withoutDraft !== parsed ||
+      migrated.savedRounds?.length !== parsed.savedRounds?.length
+    ) {
       saveState(migrated);
     }
     return migrated;

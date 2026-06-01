@@ -80,6 +80,16 @@ function blobToBase64(blob) {
   });
 }
 
+function appendTranscriptSegment(existingTranscript = '', newSegment = '') {
+  const existing = existingTranscript.trim();
+  const segment = newSegment.trim();
+
+  if (!existing) return segment;
+  if (!segment) return existing;
+
+  return `${existing}\n\n${segment}`;
+}
+
 export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRoundProcessed }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -102,6 +112,11 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
   const startedAtRef = useRef(0);
   const silentSinceRef = useRef(null);
   const processingKeyRef = useRef('');
+  const valueRef = useRef(value || '');
+
+  useEffect(() => {
+    valueRef.current = value || '';
+  }, [value]);
 
   useEffect(() => {
     if (!supportsAudioRecording()) {
@@ -348,11 +363,13 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
       setStatus('Transcribing...');
       const data = await sendAudio(blob, '/.netlify/functions/transcribe', fileName);
       const transcriptText = data.text || '';
-      onChange(transcriptText);
+      const combinedTranscript = appendTranscriptSegment(valueRef.current, transcriptText);
+      valueRef.current = combinedTranscript;
+      onChange(combinedTranscript);
       setProcessingState('converting');
-      onTranscriptReady?.(transcriptText);
+      onTranscriptReady?.(combinedTranscript, { latestSegment: transcriptText });
       setProcessingState('parsed');
-      setStatus('Transcript ready. Round parsed for review.');
+      setStatus('Transcript appended. Record another segment or review the round below.');
     } catch (processingError) {
       console.error(processingError);
       setError(processingError.message || buildAudioErrorMessage('Error processing audio', blob, fileName));
@@ -406,6 +423,12 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
             </Button>
           )}
         </div>
+
+        {value.trim() && (
+          <div className="info-box">
+            You can record in multiple parts. Each new recording is transcribed and appended to this recap.
+          </div>
+        )}
 
         <div className="row wrap">
           <Button
