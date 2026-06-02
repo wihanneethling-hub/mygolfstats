@@ -5,6 +5,8 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Textarea } from './UI
 const SILENCE_THRESHOLD = 0.018;
 const SILENCE_MS = 2200;
 const MIN_RECORDING_MS = 2500;
+const MAX_AUDIO_UPLOAD_BYTES = 4 * 1024 * 1024;
+const TRANSCRIPTION_TIMEOUT_MS = 65000;
 const PREFERRED_AUDIO_MIME_TYPES = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -113,6 +115,7 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
   const startedAtRef = useRef(0);
   const silentSinceRef = useRef(null);
   const processingKeyRef = useRef('');
+  const requestControllerRef = useRef(null);
   const valueRef = useRef(value || '');
 
   useEffect(() => {
@@ -128,6 +131,7 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
       stopMonitoring();
       revokeAudioUrl();
       stopStream();
+      requestControllerRef.current?.abort();
     };
   }, []);
 
@@ -316,18 +320,30 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
   async function sendAudio(blob, endpoint, fileName = getAudioFileName(blob)) {
     const audioBase64 = await blobToBase64(blob);
     const mimeType = getAudioMimeType(blob);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
+    requestControllerRef.current = controller;
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        audioBase64,
-        mimeType,
-        fileName
-      })
-    });
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          audioBase64,
+          mimeType,
+          fileName
+        }),
+        signal: controller.signal
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (requestControllerRef.current === controller) {
+        requestControllerRef.current = null;
+      }
+    }
 
     const responseText = await res.text();
     let data = {};
@@ -351,8 +367,23 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
     return transcribeAudio(blob, fileName, true);
   }
 
+  function cancelProcessing() {
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    setIsProcessing(false);
+    setProcessingState('error');
+    setStatus('Processing cancelled. Record a shorter recap or retry.');
+    setError('Processing cancelled. For reliable beta uploads, keep each recording under 4 MB and record the round in shorter segments.');
+  }
+
   async function transcribeAudio(blob = audioBlob, fileName = audioFileName || getAudioFileName(blob), force = false) {
     if (!blob || isProcessing) return;
+    if (blob.size > MAX_AUDIO_UPLOAD_BYTES) {
+      setProcessingState('error');
+      setStatus('Recording is too large to upload. Record the recap in shorter segments.');
+      setError(buildAudioErrorMessage('This audio file is too large for reliable upload. Keep each recording under 4 MB and record the round in shorter segments.', blob, fileName));
+      return;
+    }
     const processingKey = `${fileName}:${blob.size}:${blob.type || getAudioMimeType(blob)}`;
     if (!force && processingKeyRef.current === processingKey && processingState !== 'error') return;
     processingKeyRef.current = processingKey;
@@ -373,9 +404,14 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
       setStatus('Transcript appended. Record another segment or review the round below.');
     } catch (processingError) {
       console.error(processingError);
-      setError(processingError.message || buildAudioErrorMessage('Error processing audio', blob, fileName));
+      const wasAborted = processingError.name === 'AbortError';
+      setError(wasAborted
+        ? buildAudioErrorMessage('Transcription timed out or was cancelled. Keep each recording under 4 MB and retry with a shorter segment.', blob, fileName)
+        : processingError.message || buildAudioErrorMessage('Error processing audio', blob, fileName));
       setProcessingState('error');
-      setStatus('Processing failed. You can retry or edit the transcript manually.');
+      setStatus(wasAborted
+        ? 'Transcription timed out. Record a shorter segment or retry.'
+        : 'Processing failed. You can retry or edit the transcript manually.');
     } finally {
       setIsProcessing(false);
     }
@@ -427,6 +463,14 @@ export default function VoiceRecorder({ value, onChange, onTranscriptReady, onRo
             </Button>
           )}
         </div>
+
+        {isProcessing && (
+          <div className="row wrap">
+            <Button variant="secondary" onClick={cancelProcessing}>
+              Cancel processing
+            </Button>
+          </div>
+        )}
 
         {value.trim() && (
           <div className="info-box">
