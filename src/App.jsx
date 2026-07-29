@@ -452,7 +452,7 @@ function splitRecapIntoHoleLines(text) {
 }
 
 function getApproachText(line) {
-  const approachStart = line.search(/(?:\w+|\d+)\s+iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|duffed|approach|chip|chipped|hit to|hit it|to \d+\s*(?:ft|feet|foot)/);
+  const approachStart = line.search(/(?:\w+|\d+)[-\s]+iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|duffed|approach|chip|chipped|hit to|hit it|to \d+\s*(?:ft|feet|foot)/);
   return approachStart >= 0 ? line.slice(approachStart) : line;
 }
 
@@ -488,6 +488,37 @@ function extractFirstPuttFt(line) {
 
   const match = patterns.map((pattern) => line.match(pattern)).find(Boolean);
   return match ? Number(match[1]) : 'missing';
+}
+
+const SCORE_WORDS = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12
+};
+
+function parseScoreToken(token) {
+  const normalized = String(token || '').trim().toLowerCase();
+  return SCORE_WORDS[normalized] || Number(normalized) || null;
+}
+
+function extractGrossScore(line) {
+  const patterns = [
+    /\bfor\s+(?:a\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,2})\b/,
+    /\b(?:made|scored|shot|carded)\s+(?:a\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,2})\b/
+  ];
+
+  const match = patterns.map((pattern) => line.match(pattern)).find(Boolean);
+  const score = match ? parseScoreToken(match[1]) : null;
+  return Number.isInteger(score) && score >= 1 && score <= 15 ? score : null;
 }
 
 function getMissingParClarifications(text, course, tees, courseLayouts = {}) {
@@ -560,7 +591,7 @@ function convertRecapToStructured(text, course, tees, courseLayouts = {}) {
     const firstPuttFt = extractFirstPuttFt(line);
 
     let tee = 'n/a';
-    const driveText = line.split(/(?:\w+|\d+)\s+iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|chip|chipped/)[0];
+    const driveText = line.split(/(?:\w+|\d+)[-\s]+iron|three wood|3 wood|wedge|pitching wedge|sand wedge|bunker shot|chip|chipped/)[0];
 
     if (par === 4 || par === 5) {
       if (driveText.includes('fairway')) tee = 'fairway';
@@ -585,9 +616,10 @@ function convertRecapToStructured(text, course, tees, courseLayouts = {}) {
     }
 
     // score
-    let score = approachMiss === 'none'
+    const calculatedScore = approachMiss === 'none'
       ? par - 2 + putts
       : par - 2 + 1 + putts;
+    const score = extractGrossScore(line) || calculatedScore;
 
     return `${hole},${par},${tee},${approachMiss},${upAndDown},${putts},${firstPuttFt},${score}`;
   });
@@ -1015,7 +1047,7 @@ function LogRoundTab({
   const [parseErrors, setParseErrors] = useState([]);
   const [pendingConverterClarifications, setPendingConverterClarifications] = useState([]);
   const [isCourseSuggestionsOpen, setIsCourseSuggestionsOpen] = useState(false);
-  const courseManualEntryRef = useRef(false);
+  const courseManualEntryRef = useRef(Boolean(course));
 
   const currentStats = useMemo(() => calcStatsFromHoles(holes), [holes]);
 
@@ -1767,13 +1799,38 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
   const [customCourseLayouts, setCustomCourseLayouts] = useState({});
   const [voiceRecap, setVoiceRecap] = useState('');
   const courseLayouts = useMemo(() => mergeCourseLayouts(customCourseLayouts), [customCourseLayouts]);
+  const draftRound = useMemo(() => {
+    const hasDraftContent = Boolean(
+      course.trim() ||
+      transcript.trim() ||
+      voiceRecap.trim() ||
+      holes.length > 0 ||
+      clarifications.length > 0 ||
+      hasParsed
+    );
+
+    if (!hasDraftContent) return null;
+
+    return {
+      course,
+      tees,
+      transcript,
+      voiceRecap,
+      hasParsed,
+      holes,
+      clarifications,
+      editingHole,
+      updatedAt: new Date().toISOString()
+    };
+  }, [course, tees, transcript, voiceRecap, hasParsed, holes, clarifications, editingHole]);
   const appData = useMemo(() => ({
     version: 1,
     exportedAt: new Date().toISOString(),
     savedRounds,
     selectedPlayer,
-    customCourseLayouts
-  }), [savedRounds, selectedPlayer, customCourseLayouts]);
+    customCourseLayouts,
+    draftRound
+  }), [savedRounds, selectedPlayer, customCourseLayouts, draftRound]);
   
   useEffect(() => {
     console.log('App initial course', course);
@@ -1785,7 +1842,20 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
     if (state?.savedRounds) setSavedRounds(state.savedRounds);
     if (state?.selectedPlayer) setSelectedPlayer(state.selectedPlayer);
     if (state?.customCourseLayouts) setCustomCourseLayouts(state.customCourseLayouts);
-    setCourse('');
+
+    if (state?.draftRound) {
+      setCourse(state.draftRound.course || '');
+      setTees(state.draftRound.tees || 'Yellow');
+      setTranscript(state.draftRound.transcript || '');
+      setVoiceRecap(state.draftRound.voiceRecap || '');
+      setHasParsed(Boolean(state.draftRound.hasParsed));
+      setHoles(Array.isArray(state.draftRound.holes) ? state.draftRound.holes : []);
+      setClarifications(Array.isArray(state.draftRound.clarifications) ? state.draftRound.clarifications : []);
+      setEditingHole(state.draftRound.editingHole || null);
+    } else {
+      setCourse('');
+    }
+
     setHasLoadedState(true);
   }, []);
 
@@ -1811,8 +1881,8 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
 
   useEffect(() => {
     if (!hasLoadedState || !selectedPlayer) return;
-    saveState({ savedRounds, selectedPlayer, customCourseLayouts });
-  }, [hasLoadedState, savedRounds, selectedPlayer, customCourseLayouts]);
+    saveState({ savedRounds, selectedPlayer, customCourseLayouts, draftRound });
+  }, [hasLoadedState, savedRounds, selectedPlayer, customCourseLayouts, draftRound]);
 
   function handleCompleteUserSetup(playerName) {
     setSelectedPlayer(playerName);
@@ -1823,9 +1893,21 @@ function StatsTab({ rounds, selectedPlayer, appData, onChangePlayerName, onImpor
     setSelectedPlayer(playerName);
   }
 
+  function clearRoundDraft() {
+    setCourse('');
+    setTees('Yellow');
+    setTranscript('');
+    setVoiceRecap('');
+    setHoles([]);
+    setClarifications([]);
+    setEditingHole(null);
+    setHasParsed(false);
+  }
+
   function handleSaveRound(payload) {
     const round = buildSavedRound(payload);
     setSavedRounds((current) => [round, ...current]);
+    clearRoundDraft();
     setActiveTab('history');
   }
 function handleDeleteRound(roundId) {
@@ -1984,6 +2066,18 @@ function handleImportData(imported) {
   setSavedRounds(imported.savedRounds);
   setSelectedPlayer(imported.selectedPlayer || selectedPlayer);
   setCustomCourseLayouts(imported.customCourseLayouts || {});
+  if (imported.draftRound) {
+    setCourse(imported.draftRound.course || '');
+    setTees(imported.draftRound.tees || 'Yellow');
+    setTranscript(imported.draftRound.transcript || '');
+    setVoiceRecap(imported.draftRound.voiceRecap || '');
+    setHasParsed(Boolean(imported.draftRound.hasParsed));
+    setHoles(Array.isArray(imported.draftRound.holes) ? imported.draftRound.holes : []);
+    setClarifications(Array.isArray(imported.draftRound.clarifications) ? imported.draftRound.clarifications : []);
+    setEditingHole(imported.draftRound.editingHole || null);
+  } else {
+    clearRoundDraft();
+  }
   setSelectedRoundId(null);
   setActiveTab('stats');
   window.alert('Import complete.');
@@ -2006,6 +2100,7 @@ function handleResetData() {
   setVoiceRecap('');
   setHoles([]);
   setClarifications([]);
+  setEditingHole(null);
   setHasParsed(false);
   setSelectedRoundId(null);
   setActiveTab('log');

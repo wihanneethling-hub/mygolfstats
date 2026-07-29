@@ -189,6 +189,109 @@ function applyCourseContext(round, { course, tees, parByHole } = {}) {
   };
 }
 
+const ORDINAL_HOLES = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+  eleventh: 11,
+  twelfth: 12,
+  thirteenth: 13,
+  fourteenth: 14,
+  fifteenth: 15,
+  sixteenth: 16,
+  seventeenth: 17,
+  eighteenth: 18
+};
+
+const SPOKEN_NUMBERS = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12
+};
+
+function getHoleMentions(transcript) {
+  const pattern = /\b(?:(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth)|(\d{1,2})(?:st|nd|rd|th)?)\s+hole\b|\bhole\s+(\d{1,2})\b/g;
+  return [...String(transcript || '').toLowerCase().matchAll(pattern)]
+    .map((match) => ({
+      hole: ORDINAL_HOLES[match[1]] || Number(match[2] || match[3]),
+      index: match.index
+    }))
+    .filter((mention) => Number.isInteger(mention.hole));
+}
+
+function getHoleTranscriptSegment(transcript, holeNumber) {
+  const normalized = String(transcript || '').toLowerCase();
+  const mentions = getHoleMentions(normalized);
+  if (!mentions.length) return normalized;
+
+  const current = mentions.find((mention) => mention.hole === holeNumber);
+  if (!current) return '';
+
+  const next = mentions.find((mention) => mention.index > current.index);
+  return normalized.slice(current.index, next ? next.index : normalized.length);
+}
+
+function parseSpokenNumber(value) {
+  const normalized = String(value || '').toLowerCase();
+  return SPOKEN_NUMBERS[normalized] || Number(normalized) || null;
+}
+
+function hasExplicitGrossScore(segment) {
+  const scorePattern = /\b(?:for|scored|shot|carded)\s+(?:a\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,2})\b/;
+  const match = segment.match(scorePattern);
+  const score = match ? parseSpokenNumber(match[1]) : null;
+  return Number.isInteger(score) && score >= 1 && score <= 15;
+}
+
+function segmentSaysMadePutt(segment) {
+  return (
+    /\b(?:made|holed|sank|drained)\s+(?:the\s+)?putt\b/.test(segment) ||
+    /\brolled\s+it\s+in\b/.test(segment)
+  );
+}
+
+function normalizeMadePuttHoles(round, transcript) {
+  return {
+    ...round,
+    holes: round.holes.map((hole) => {
+      const segment = getHoleTranscriptSegment(transcript, hole.hole);
+      if (!segment || !segmentSaysMadePutt(segment)) return hole;
+
+      const nextHole = {
+        ...hole,
+        putts: 1
+      };
+
+      if (hole.approachMiss && hole.approachMiss !== 'none') {
+        nextHole.upAndDown = true;
+      }
+
+      if (hole.par && !hasExplicitGrossScore(segment)) {
+        const missedGreenShot = hole.approachMiss && hole.approachMiss !== 'none' ? 1 : 0;
+        nextHole.score = hole.par - 2 + missedGreenShot + nextHole.putts;
+      }
+
+      return nextHole;
+    })
+  };
+}
+
 async function extractRound(transcript, context = {}) {
   const activeLayoutText = Array.isArray(context.parByHole) && context.parByHole.length === 18
     ? `Active course layout pars by hole: ${context.parByHole.map((par, index) => `H${index + 1}:${par}`).join(' ')}. These pars are the source of truth.`
@@ -212,6 +315,10 @@ async function extractRound(transcript, context = {}) {
             'Keep the drive, approach, recovery shots, putts, and gross score separate.',
             'A drive in the fairway followed by an approach short of the green means tee fairway and approachMiss short.',
             'A chip to 15 feet followed by two putts means firstPuttFt 15 and putts 2.',
+            'A chip to 20 feet followed by made the putt means firstPuttFt 20, putts 1, and upAndDown true when the green was missed.',
+            'A bad chip to 20 feet is still one chip, not two recovery shots.',
+            'If the golfer says made the putt, holed the putt, sank the putt, drained the putt, or rolled it in, putts must be 1 unless they clearly said an earlier putt was missed.',
+            'When no gross score is stated, calculate score from described shots: drive + approach + recovery shots + putts + penalties.',
             'When the golfer states a gross score, use that exact score instead of calculating a different score.',
             'For par 3 tee values use n/a unless the transcript says otherwise.',
             'If an approach was on the green, use approachMiss none and gir true.',
@@ -252,7 +359,8 @@ async function extractRound(transcript, context = {}) {
     throw new Error('Round extraction returned no data');
   }
 
-  return addFallbackClarifications(applyCourseContext(JSON.parse(outputText), context));
+  const contextualRound = applyCourseContext(JSON.parse(outputText), context);
+  return addFallbackClarifications(normalizeMadePuttHoles(contextualRound, transcript));
 }
 
 export async function handler(event) {
